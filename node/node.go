@@ -23,7 +23,7 @@ func Init(name string) *Node {
 		Name: name,
 	}
 
-	sig := make(chan os.Signal)
+	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
@@ -46,7 +46,6 @@ func (n *Node) Callback(f func()) {
 	n.callback = f
 }
 func (p *Node) Publish(_topic string, msg interface{}) {
-	println("publishing message: ", msg)
 	topic.Publish(p.conn, _topic, msg)
 }
 

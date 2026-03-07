@@ -3,46 +3,29 @@
             `amaros`
   </h1>
 </div>
+This is a conceptual design document for a distributed agent orchestration system. The system is designed to be flexible, scalable, and modular, allowing for dynamic workflows and integration with various tools and services.
+The project is more or less like a distributed graph of nodes that execute workflows.
+A one singular organization can run multiple nodes. nodes aren't persistent, they can come and go. They report their capabilities and load metrics through a heartbeat mechanism. 
+It is analogous to a ROS-style node graph, in ways similar to a ZeroMQ distributed system, with topics and events. Nodes can exist in different organizations(computer).
+Nodes subscribe to topics and execute tasks based on their capabilities.
+Events are like CRON jobs, but they can be triggered by external inputs or internal state changes.
+Nodes are specialized and do one thing well, but they can be composed together to create complex workflows. They run in a loop, waiting for tasks to execute. They can also report their status and results back to the system.
+Nodes can call external APIs, like models, databases, external APIs (weather, stocks, etc), messaging (whatsapp, telegram,..), search, and more. They can also call other nodes, but through message passing if within different organization, or direct function calls if within the same organization.
+Nodes do only one thing, but they do it well.
+This design allows for a highly modular and extensible system, where new capabilities can be added by simply creating new nodes and defining their interactions with existing nodes.
 
-This is a lightweight reimplementation of core ROS concepts, focusing on __`roscore`__ and topic-based communication for subscribing and publishing. Built entirely in Go without external libraries, it mimics essential ROS behavior in a minimalistic way. The `roscore` server manages message exchanges between nodes, while topics enable asynchronous communication.
+## Libraries (used but not limited to)
+- Go
+- zmq4 - for inter-node communication
+- protobuf - for message serialization and comprehensive description of messages and events.
+- viper - for configuration management (~/.config/copilot/)
+- fiber - for human-facing node 
+- sqlite - for state management and memory, registry in sqlite
+- logrus - for logging
+- cobra - for CLI tools
 
-This aims to mimic the essential behavior of ROS in a minimalistic way, making it easier to understand the underlying mechanisms while maintaining flexibility and performance due to Go’s concurrency model.
+memory heirarchy:
+in-memory -> file(readme)-> sqlite 
 
-| commands  | purposes                                        |
-| --------- | ----------------------------------------------- |
-| core      | To start roscore server on master url as in ROS |
-| subscribe | To subscribe to a topic                         |
-| publish   | To publish a topic                              |
-| status    | To get stats of a topic                         |
-
-### TODO
-
-- [x] ROS core
-- [x] Publish topic
-- [x] Subscribe to topic
-- [x] message types
-- [x] get topic metrics
-- [x] better CLI
-- [ ] Create more realistic topic `/cmd_vel` or `/raw_image`
-- [x] ROS Node
-- [x] ROS simple client library
-- [ ] ROS service
-- [ ] ROS launch file
-
-### HOW TO USE
-
-#### to build it,
-1. *Linux*: simply run. **Note SHELL_TYPE** in Makefile may be different verify it if not working
-```
-make build
-```
-
-2. *MacOs*: change the __SHELL_TYPE__, to location of shell script (ie `~/.bashrc`) in the **Makefile**, then run `make build`
-3. *Windows*: use WSL, and follow Linux setup
-
-#### commands
-You can check it for yourself using. 
-```
-amaros --help
-```
-
+models:
+model are called via openrouter api, which is a unified API for multiple models. This allows for flexibility in choosing different models based on the task at hand. Models can be used for various purposes.

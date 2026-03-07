@@ -14,16 +14,10 @@ import (
 )
 
 func main() {
-
-	demoMsg := new(msgs.DemoMsg)
-	demoMsg.Message = "Hello Mini ROS!"
-
-	demoMsgBytes, _ := json.Marshal(demoMsg)
-
 	app := &cli.App{
 		Name:                 "amaros",
 		EnableBashCompletion: true,
-		Usage:                "a simple ROS implementation in Go for educational purposes",
+		Usage:                "a simple agentic orchestrator in Go",
 		Commands: []*cli.Command{
 			{
 				Name:        "core",
@@ -41,12 +35,21 @@ func main() {
 						Value: "0.0.0.0",
 						Usage: "ROS master host",
 					},
+					&cli.BoolFlag{
+						Name:    "debug",
+						Value:   false,
+						Aliases: []string{"verbose"},
+						Usage:   "Enable debug logging",
+					},
 				},
 				Action: func(cCtx *cli.Context) error {
 					host := cCtx.String("host")
 					port := cCtx.Int("port")
 
-					r := core.NewRosCore()
+					r := core.NewCore()
+					if cCtx.Bool("debug") {
+						r.LogLevel("debug")
+					}
 					r.Listen(host, port)
 					return nil
 				},
@@ -80,8 +83,8 @@ func main() {
 							&cli.StringFlag{
 								Name:    "message",
 								Aliases: []string{"msg"},
-								Value:   string(demoMsgBytes),
-								Usage:   "Message to send",
+								// Value:   string(demoMsgBytes),
+								Usage: "Message to send",
 							},
 							&cli.BoolFlag{
 								Name:    "once",
@@ -90,14 +93,25 @@ func main() {
 								Usage:   "Publish message once",
 							},
 						},
+
 						Action: func(cCtx *cli.Context) error {
 
 							if cCtx.NArg() == 0 {
 								log.Fatal("Topic name is required")
 							}
-							message := cCtx.String("message")
 
+							message := cCtx.String("message")
 							conn := topic.DialServer(cCtx.String("address"))
+
+							// a simple publisher that publishes the message every 5 seconds, or just once if --once flag is set
+							demoMsg := new(msgs.DemoMsg)
+							demoMsg.Message = message
+							if message == "" {
+								demoMsg.Message = "Hello Mini ROS!"
+							}
+							demoMsgBytes, _ := json.Marshal(demoMsg)
+							message = string(demoMsgBytes)
+							println("MESSAGE IS :" + message)
 
 							var msg interface{}
 							err := json.Unmarshal([]byte(message), &msg)
@@ -129,8 +143,12 @@ func main() {
 							conn := topic.DialServer(cCtx.String("address"))
 							msg := msgs.DemoMsg{}
 							_topic := cCtx.Args().Get(0)
-							callback := func() {
-								log.Printf("%s>%s (type:%s)\n", _topic, msg.Message, reflect.TypeOf(msg))
+							callback := func(ctx topic.CallbackContext) {
+								// a simple callback that just prints the message content and type
+								ctx.Logger.WithFields(map[string]interface{}{
+									"topic": _topic,
+									"type":  reflect.TypeOf(msg),
+								}).Debug(msg.Message)
 							}
 
 							topic.Subscribe(conn, _topic, &msg, callback)

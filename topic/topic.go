@@ -7,10 +7,10 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"reflect"
 	"strings"
 	"syscall"
 
+	ilog "github.com/amar-jay/amaros/internal/logger"
 	"github.com/amar-jay/amaros/msgs"
 )
 
@@ -26,6 +26,12 @@ type Status struct {
 }
 
 var topics = make([]Topic, 0)
+var logger *ilog.Logger
+
+func init() {
+	logger = ilog.New()
+	logger.SetLevel("debug")
+}
 
 func DialServer(address string) net.Conn {
 	conn, err := net.Dial("tcp", address)
@@ -38,12 +44,19 @@ func DialServer(address string) net.Conn {
 
 func handleUnsubscribe(conn net.Conn, topic string) {
 	fmt.Fprintf(conn, "UNSUBSCRIBE %s\n", topic)
-	println("unsubscribed successfully", topic)
+	logger.WithFields(map[string]interface{}{
+		"topic": topic,
+	}).Debug("Unsubscribed from topic")
 }
 
-func handleSubscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback func()) {
+type CallbackContext struct {
+	Logger *ilog.Logger // not well written right, never mind it should be left so.
+	// add more fields as needed
+}
+
+func handleSubscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback func(CallbackContext)) {
 	reader := bufio.NewReader(conn)
-	sig := make(chan os.Signal)
+	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sig
@@ -52,16 +65,15 @@ func handleSubscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback fun
 	}()
 
 	for {
-		println("waiting for message...")
 		message, err := reader.ReadString('\n')
 		if err != nil {
-			fmt.Println("Server disconnected.")
+			logger.Error("Server disconnected:", err)
 			return
 		}
 		message = strings.TrimSpace(message)
 		m := strings.SplitAfterN(message, " ", 2)
 		if len(m) < 2 {
-			fmt.Println("ERROR> Invalid message from server:", m, len(m))
+			logger.Error("Invalid message from server:", m, len(m))
 		}
 
 		_topic, message := m[0], m[1]
@@ -71,16 +83,17 @@ func handleSubscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback fun
 		}
 
 		err = json.Unmarshal([]byte(message), &msg)
-		// put it in type msg
-		println("message received type: ", reflect.TypeOf(&msg).String())
 
 		if err != nil {
-			fmt.Println("Unmarshal json error", err)
+			logger.Error("Unmarshal json error", err)
 			continue
 		}
 
+		// put it in type msg
+		//logger.Debug("message received type: ", reflect.TypeOf(&msg).String())
+
 		if strings.TrimSpace(_topic) == topic && callback != nil {
-			callback()
+			callback(CallbackContext{Logger: logger})
 		}
 	}
 }
@@ -89,7 +102,7 @@ func handleStatus(conn net.Conn, topic string) {
 	reader := bufio.NewReader(conn)
 	message, err := reader.ReadString('\n')
 	if err != nil {
-		fmt.Println("Server disconnected.")
+		logger.Error("Server disconnected.", err)
 		return
 	}
 	message = strings.TrimSpace(message)
@@ -101,17 +114,21 @@ func handleStatus(conn net.Conn, topic string) {
 
 	err = json.Unmarshal([]byte(message), &msg)
 	if err != nil {
-		fmt.Println("Unmarshal json error", err)
+		logger.Error("Unmarshal json error", err)
 		return
 	}
-	fmt.Printf("STATUS> %s:\t%d Subscribers\t%s Type\n", topic, msg.Subscribers[topic], msg.Type)
+	logger.WithFields(map[string]interface{}{
+		"topic":       topic,
+		"subscribers": msg.Subscribers[topic],
+		"type":        msg.Type,
+	}).Debug("Topic status")
 }
 
 func handleList(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 	message, err := reader.ReadString('\n')
 	if err != nil {
-		fmt.Println("Server disconnected.")
+		logger.Error("Server disconnected.", err)
 		return
 	}
 	message = strings.TrimSpace(message)
@@ -121,25 +138,25 @@ func handleList(conn net.Conn) {
 
 	err = json.Unmarshal([]byte(message), &topics)
 	if err != nil {
-		fmt.Println("Unmarshal json error: ", message, "\n", err)
+		logger.Error("Unmarshal json error: ", message, "\n", err)
 		return
 	}
 	for _, topic := range topics {
-		fmt.Println(topic.Name)
+		logger.Debug("Topic: ", topic.Name)
 	}
 }
 
 func Publish(conn net.Conn, topic string, message msgs.ROS_MSG) {
 	msg, err := json.Marshal(message)
 	if err != nil {
-		fmt.Printf("invalid message type. unable to parse message")
+		logger.Error("invalid message type. unable to parse message")
 	}
 
 	// Send PUBLISH command to server
 	fmt.Fprintf(conn, "PUBLISH %s %s\n", topic, msg)
 }
 
-func Subscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback func()) {
+func Subscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback func(CallbackContext)) {
 	fmt.Fprintf(conn, "SUBSCRIBE %s %T\n", topic, msg)
 	handleSubscribe(conn, topic, msg, callback)
 }
