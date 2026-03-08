@@ -5,6 +5,8 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"regexp"
+	"strings"
 	"syscall"
 
 	ilog "github.com/amar-jay/amaros/internal/logger"
@@ -171,6 +173,11 @@ func handleList(conn net.Conn) {
 }
 
 func Publish(conn net.Conn, topic string, message msgs.ROS_MSG) {
+	if err := Validate(topic); err != nil {
+		logger.Error("Error: invalid topic ", topic)
+		return
+	}
+
 	payload, err := msgpack.Marshal(message)
 	if err != nil {
 		logger.Error("invalid message type. unable to marshal message:", err)
@@ -183,6 +190,11 @@ func Publish(conn net.Conn, topic string, message msgs.ROS_MSG) {
 }
 
 func Subscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback func(CallbackContext)) {
+	if err := Validate(topic); err != nil {
+		logger.Error("Error: invalid topic ", topic)
+		return
+	}
+
 	topicType := fmt.Sprintf("%T", msg)
 	if err := writeEnvelope(conn, msgs.Envelope{Cmd: msgs.CmdSubscribe, Topic: topic, TopicType: topicType}); err != nil {
 		logger.Error("Failed to send SUBSCRIBE:", err)
@@ -200,9 +212,48 @@ func List(conn net.Conn) {
 }
 
 func SubscribeStatus(conn net.Conn, topic string) {
+
+	if err := Validate(topic); err != nil {
+		logger.Error("Error: invalid topic ", topic)
+		return
+	}
+
 	if err := writeEnvelope(conn, msgs.Envelope{Cmd: msgs.CmdStatus, Topic: topic}); err != nil {
 		logger.Error("Failed to send STATUS:", err)
 		return
 	}
 	handleStatus(conn, topic)
+}
+
+// validTopicRe matches topic names of the form /namespace/name or /name.
+// Each segment must start with a letter or underscore and contain only
+// alphanumeric characters and underscores.
+var validTopicRe = regexp.MustCompile(`^(/[a-zA-Z_][a-zA-Z0-9_.]*)+$`)
+
+// Validate returns an error if name is not a valid RoboOS topic name.
+// Valid names start with '/' and consist of one or more slash-separated
+// segments, each beginning with a letter or underscore.
+// Examples of valid names:   /sensor.imu, /robot.sensor.imu, /robot.arm.joint1
+func Validate(name string) error {
+	if name == "" {
+		return fmt.Errorf("topic name must not be empty")
+	}
+	if !strings.HasPrefix(name, "/") {
+		return fmt.Errorf("topic name %q must start with '/'", name)
+	}
+	if strings.HasSuffix(name, "/") {
+		return fmt.Errorf("topic name %q must not end with '/'", name)
+	}
+	// shouldn't contain "/" after the first character, since that would indicate a segment with an empty name
+	if strings.Contains(name[1:], "/") {
+		return fmt.Errorf("topic name %q must not contain '/' after the first character", name)
+	}
+	// Reject names that contain consecutive '/' or '.' to avoid ambiguity in parsing.
+	if strings.Contains(name, "//") || strings.Contains(name, "..") {
+		return fmt.Errorf("topic name %q must not contain consecutive '/' or '.'", name)
+	}
+	if !validTopicRe.MatchString(name) {
+		return fmt.Errorf("topic name %q is invalid: use /namespace/name format (alphanumeric + underscore segments)", name)
+	}
+	return nil
 }

@@ -16,8 +16,8 @@ import (
 
 const (
 	defaultModel   = "openrouter/free"
-	requestTopic   = "/llm.execute"
-	responseTopic  = "/llm.stdout"
+	requestTopic   = "/llm.request"
+	responseTopic  = "/llm.response"
 	requestTimeout = 60 * time.Second
 )
 
@@ -27,6 +27,9 @@ var (
 	llmReq   = &msgs.LLMRequest{}
 	provider model.Provider
 )
+
+const sysPromptPrefix = `
+`
 
 func init() {
 	conf = config.Get()
