@@ -14,7 +14,8 @@ type Node struct {
 	Name       string
 	onshutdown func()
 	callback   func(topic.CallbackContext) // to listen for messages
-	conn       net.Conn
+	txConn     net.Conn                    // connection for publishing (TX)
+	rxConn     net.Conn                    // connection for subscribing (RX)
 }
 
 func Init(name string) *Node {
@@ -34,7 +35,8 @@ func Init(name string) *Node {
 		}
 	}()
 
-	n.conn = topic.DialServer("localhost:11311")
+	n.txConn = topic.DialServer("localhost:11311")
+	n.rxConn = topic.DialServer("localhost:11312")
 	return n
 }
 
@@ -46,9 +48,9 @@ func (n *Node) Callback(f func(topic.CallbackContext)) {
 	n.callback = f
 }
 func (p *Node) Publish(_topic string, msg interface{}) {
-	topic.Publish(p.conn, _topic, msg)
+	topic.Publish(p.txConn, _topic, msg)
 }
 
 func (s *Node) Subscribe(_topic string, msg msgs.ROS_MSG) {
-	topic.Subscribe(s.conn, _topic, msg, s.callback)
+	topic.Subscribe(s.rxConn, _topic, msg, s.callback)
 }

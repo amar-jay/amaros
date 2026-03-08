@@ -35,13 +35,13 @@ all: build export
 build: $(ROS_CORE_BIN)
 
 $(ROS_CORE_BIN): $(ROS_CORE_SRC)
-	@echo "Building ROS binary..."
+	@echo "Building AMAROS binary..."
 	@go build -o $(ROS_CORE_BIN) $(ROS_CORE_SRC)
 
 
 # Run the ros_core binary
 ros_core: $(ROS_CORE_BIN)
-	@echo "Running ROS binary..."
+	@echo "Running AMAROS binary..."
 	@$(ROS_CORE_BIN)
 
 # Clean up build artifacts

@@ -49,14 +49,14 @@ func main() {
 				},
 				Action: func(cCtx *cli.Context) error {
 					host := cCtx.String("host")
-					tx_port := cCtx.Int("tx_port")
-					rx_port := cCtx.Int("rx_port")
+					txPort := cCtx.Int("tx_port")
+					rxPort := cCtx.Int("rx_port")
 
 					r := core.NewCore()
 					if cCtx.Bool("debug") {
 						r.LogLevel("debug")
 					}
-					r.Listen(host, port)
+					r.Listen(host, txPort, rxPort)
 					return nil
 				},
 			},
@@ -72,10 +72,16 @@ func main() {
 				Flags: []cli.Flag{
 
 					&cli.StringFlag{
-						Name:    "address",
-						Aliases: []string{"add", "a"},
+						Name:    "tx_address",
+						Aliases: []string{"tx"},
 						Value:   "localhost:11311",
-						Usage:   "ROS master host",
+						Usage:   "TX (publish) server address",
+					},
+					&cli.StringFlag{
+						Name:    "rx_address",
+						Aliases: []string{"rx"},
+						Value:   "localhost:11312",
+						Usage:   "RX (subscribe) server address",
 					},
 				},
 				Subcommands: []*cli.Command{
@@ -107,22 +113,18 @@ func main() {
 							}
 
 							message := cCtx.String("message")
-							conn := topic.DialServer(cCtx.String("address"))
-
-							// a simple publisher that publishes the message every 5 seconds, or just once if --once flag is set
-							demoMsg := new(msgs.DemoMsg)
-							demoMsg.Message = message
-							if message == "" {
-								demoMsg.Message = "Hello Mini ROS!"
-							}
-							demoMsgBytes, _ := json.Marshal(demoMsg)
-							message = string(demoMsgBytes)
-							println("MESSAGE IS :" + message)
-
+							conn := topic.DialServer(cCtx.String("tx_address"))
 							var msg interface{}
-							err := json.Unmarshal([]byte(message), &msg)
-							if err != nil {
-								log.Fatal("Unable to unmarshal message")
+							if message == "" {
+								demoMsg := new(msgs.DemoMsg)
+								demoMsg.Message = "Hello Mini ROS!"
+								msg = interface{}(demoMsg)
+							} else {
+								println("MESSAGE IS :" + message)
+								err := json.Unmarshal([]byte(message), &msg)
+								if err != nil {
+									log.Fatal("Unable to unmarshal message")
+								}
 							}
 
 							if cCtx.Bool("once") {
@@ -146,7 +148,7 @@ func main() {
 							if cCtx.NArg() == 0 {
 								log.Fatal("Topic name is required")
 							}
-							conn := topic.DialServer(cCtx.String("address"))
+							conn := topic.DialServer(cCtx.String("rx_address"))
 							msg := msgs.DemoMsg{}
 							_topic := cCtx.Args().Get(0)
 							callback := func(ctx topic.CallbackContext) {
@@ -170,7 +172,7 @@ func main() {
 							if cCtx.NArg() == 0 {
 								log.Fatal("Topic name is required")
 							}
-							conn := topic.DialServer(cCtx.String("address"))
+							conn := topic.DialServer(cCtx.String("rx_address"))
 							topic.SubscribeStatus(conn, cCtx.Args().Get(0))
 							return nil
 						},
@@ -180,7 +182,7 @@ func main() {
 						Category: "topic",
 						Usage:    "get list of all topics",
 						Action: func(cCtx *cli.Context) error {
-							conn := topic.DialServer(cCtx.String("address"))
+							conn := topic.DialServer(cCtx.String("rx_address"))
 							topic.List(conn)
 							return nil
 						},

@@ -41,23 +41,45 @@ func (r *Core) LogLevel(level string) {
 	}
 }
 
-func (r *Core) Listen(host string, port int) {
-	ln, err := net.Listen("tcp", host+":"+strconv.Itoa(port))
+func (r *Core) Listen(host string, txPort int, rxPort int) {
+	txAddr := host + ":" + strconv.Itoa(txPort)
+	rxAddr := host + ":" + strconv.Itoa(rxPort)
+
+	txLn, err := net.Listen("tcp", txAddr)
 	if err != nil {
-		r.logger.Error("Error starting TCP server:", err)
+		r.logger.Error("Error starting TX server:", err)
 		return
 	}
-	defer ln.Close()
 
-	r.logger.Printf("roscore server listening on tcp://%s:%d/\n", host, port)
+	rxLn, err := net.Listen("tcp", rxAddr)
+	if err != nil {
+		txLn.Close()
+		r.logger.Error("Error starting RX server:", err)
+		return
+	}
 
+	r.logger.Printf("roscore TX (publish) listening on tcp://%s/\n", txAddr)
+	r.logger.Printf("roscore RX (subscribe) listening on tcp://%s/\n", rxAddr)
+
+	go func() {
+		defer rxLn.Close()
+		for {
+			conn, err := rxLn.Accept()
+			if err != nil {
+				r.logger.Error("Error accepting RX connection:", err)
+				continue
+			}
+			go r.HandleConn(conn)
+		}
+	}()
+
+	defer txLn.Close()
 	for {
-		conn, err := ln.Accept()
+		conn, err := txLn.Accept()
 		if err != nil {
-			r.logger.Error("Error accepting connection:", err)
+			r.logger.Error("Error accepting TX connection:", err)
 			continue
 		}
-
 		go r.HandleConn(conn)
 	}
 }
