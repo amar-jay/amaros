@@ -1,15 +1,14 @@
 package core
 
 import (
-	"bufio"
-	"encoding/json"
 	"net"
 	"strconv"
-	"strings"
 	"sync"
 
 	ilog "github.com/amar-jay/amaros/internal/logger"
+	"github.com/amar-jay/amaros/pkg/msgs"
 	t "github.com/amar-jay/amaros/pkg/topic"
+	msgpack "github.com/shamaton/msgpack/v2"
 )
 
 // hmmm! A synchronous map will be more useful here. However, this is just a simple example
@@ -84,82 +83,64 @@ func (r *Core) Listen(host string, txPort int, rxPort int) {
 	}
 }
 
+func writeEnvelope(conn net.Conn, env msgs.Envelope) error {
+	data, err := msgpack.Marshal(env)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Write(data)
+	return err
+}
+
 func (r *Core) HandleConn(conn net.Conn) {
 	defer conn.Close()
-	reader := bufio.NewReader(conn)
 	for {
-		// Read the incoming message from the client
-		message, err := reader.ReadString('\n')
-		if err != nil {
-			// most likely the client disconnected, so we close the connection, else user must reconnect
+		var env msgs.Envelope
+		if err := msgpack.UnmarshalRead(conn, &env); err != nil {
+			// most likely the client disconnected, so we close the connection
 			break
 		}
 
-		message = strings.TrimSpace(message)
-		tokens := strings.SplitN(message, " ", 2)
-
-		var command, topic string
-		if len(tokens) == 2 {
-			command, topic = tokens[0], tokens[1]
-		} else if len(tokens) == 1 {
-			command = tokens[0]
-		} else {
-			conn.Write([]byte("Invalid command\n"))
-			println("Invalid command", message)
-			continue
-		}
-
-		_type := "unknown"
-		switch command {
-		case "SUBSCRIBE":
-			r.Subscribe(topic, _type, conn)
-		case "UNSUBSCRIBE":
-			r.Unsubscribe(topic, conn)
-		case "PUBLISH":
-			r.Publish(topic, conn)
-		case "STATUS":
-			r.Status(topic, conn)
-		case "LIST":
+		switch env.Cmd {
+		case msgs.CmdSubscribe:
+			r.Subscribe(env.Topic, env.TopicType, conn)
+		case msgs.CmdUnsubscribe:
+			r.Unsubscribe(env.Topic, conn)
+		case msgs.CmdPublish:
+			r.Publish(env.Topic, env.Payload, conn)
+		case msgs.CmdStatus:
+			r.Status(env.Topic, conn)
+		case msgs.CmdList:
 			r.List(conn)
 		default:
-			conn.Write([]byte("Unknown command\n"))
+			writeEnvelope(conn, msgs.Envelope{Cmd: msgs.RespError, Err: "unknown command"})
 		}
 	}
 }
 
-func (r *Core) Subscribe(topic_type string, _type string, conn net.Conn) {
+func (r *Core) Subscribe(topic string, topicType string, conn net.Conn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	parts := strings.SplitAfterN(topic_type, " ", 2)
-	if len(parts) < 2 {
-		conn.Write([]byte("Invalid publish format. Use: SUBSCRIBE <topic> <type>\n"))
+	if topic == "" {
+		writeEnvelope(conn, msgs.Envelope{Cmd: msgs.RespError, Err: "invalid subscribe: missing topic"})
 		return
 	}
-	topic, _type := parts[0], parts[1]
-	_type = strings.TrimSpace(_type)
-	topic = strings.TrimSpace(topic)
 
 	r.Subscribers[topic] = append(r.Subscribers[topic], conn)
-	if r.Types[topic] != "" && _type != r.Types[topic] {
-		conn.Write([]byte("Invalid message type format. Use: SUBSCRIBE <topic> " + r.Types[topic] + "\n"))
+	if r.Types[topic] != "" && topicType != r.Types[topic] {
+		writeEnvelope(conn, msgs.Envelope{Cmd: msgs.RespError, Err: "invalid message type, expected " + r.Types[topic]})
 		return
 	}
 	if r.Types[topic] == "" {
-		r.Types[topic] = _type
+		r.Types[topic] = topicType
 	}
 
-	// since a topic can have multiple subscribers, we keep track of all the subscribers in a slice.
-	//fmt.Println("Client", conn.RemoteAddr(), "subscribed to topic", topic, "type", _type)
 	r.logger.WithFields(map[string]interface{}{
 		"topic": topic,
-		"type":  _type,
+		"type":  topicType,
 	}).Debug("New subscription")
-	// there is no need to send a message to the client that they have subscribed successfully
-	msg, _ := json.Marshal(map[string]string{
-		"message": "subscribed successfully",
-	})
-	conn.Write([]byte(topic + " " + string(msg) + "\n"))
+	writeEnvelope(conn, msgs.Envelope{Cmd: msgs.RespOK, Topic: topic})
 }
 
 func (r *Core) Unsubscribe(topic string, conn net.Conn) {
@@ -184,23 +165,24 @@ func (r *Core) Unsubscribe(topic string, conn net.Conn) {
 	// no need to send a message to the client that they have unsubscribed successfully
 }
 
-func (r *Core) Publish(topic_message string, conn net.Conn) {
+func (r *Core) Publish(topic string, payload []byte, conn net.Conn) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	parts := strings.SplitAfterN(topic_message, " ", 2)
-	if len(parts) < 2 {
-		conn.Write([]byte("Invalid publish format. Use: PUBLISH <topic> <message>\n"))
-	} else {
-		topic, message := parts[0], parts[1]
-		message = strings.TrimSpace(message)
-		topic = strings.TrimSpace(topic)
+	if topic == "" {
+		writeEnvelope(conn, msgs.Envelope{Cmd: msgs.RespError, Err: "invalid publish: missing topic"})
+		return
+	}
 
-		for _, conn := range r.Subscribers[topic] {
-			conn.Write([]byte(topic + " " + string(message) + "\n"))
+	fwd := msgs.Envelope{Cmd: msgs.RespMessage, Topic: topic, Payload: payload}
+	for _, sub := range r.Subscribers[topic] {
+		if err := writeEnvelope(sub, fwd); err != nil {
 			r.logger.WithFields(map[string]interface{}{
-				"topic":   topic,
-				"message": message,
+				"topic": topic,
+			}).Error("Error forwarding message to subscriber:", err)
+		} else {
+			r.logger.WithFields(map[string]interface{}{
+				"topic": topic,
 			}).Debug("Publishing message")
 		}
 	}
@@ -208,29 +190,28 @@ func (r *Core) Publish(topic_message string, conn net.Conn) {
 
 func (r *Core) Status(topic string, conn net.Conn) {
 	status := t.Status{Subscribers: map[string]int{topic: len(r.Subscribers[topic])}, Type: r.Types[topic]}
-	for t, conns := range r.Subscribers {
-		status.Subscribers[t] = len(conns)
+	for topicName, conns := range r.Subscribers {
+		status.Subscribers[topicName] = len(conns)
 	}
-	st, err := json.Marshal(status)
+	payload, err := msgpack.Marshal(status)
 	if err != nil {
 		r.logger.Error("Error marshalling status")
 		return
 	}
 
-	conn.Write([]byte(string(st) + "\n"))
-
+	writeEnvelope(conn, msgs.Envelope{Cmd: msgs.RespStatus, Payload: payload})
 }
 
 func (r *Core) List(conn net.Conn) {
-	topics := make([]t.Topic, 0, len(r.Subscribers))
-	for _t := range r.Subscribers {
-		topics = append(topics, t.Topic{Name: _t}) // that is to assume list does not need to know the type
+	topicList := make([]t.Topic, 0, len(r.Subscribers))
+	for topicName := range r.Subscribers {
+		topicList = append(topicList, t.Topic{Name: topicName}) // that is to assume list does not need to know the type
 	}
-	st, err := json.Marshal(topics)
+	payload, err := msgpack.Marshal(topicList)
 	if err != nil {
-		r.logger.Error("Error marshalling status")
+		r.logger.Error("Error marshalling topics list")
 		return
 	}
 
-	conn.Write([]byte(string(st) + "\n"))
+	writeEnvelope(conn, msgs.Envelope{Cmd: msgs.RespList, Payload: payload})
 }
