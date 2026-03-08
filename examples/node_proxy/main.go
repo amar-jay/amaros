@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amar-jay/amaros/msgs"
-	"github.com/amar-jay/amaros/node"
-	"github.com/amar-jay/amaros/topic"
+	"github.com/amar-jay/amaros/pkg/msgs"
+	"github.com/amar-jay/amaros/pkg/node"
+	"github.com/amar-jay/amaros/pkg/topic"
 )
 
 var t *msgs.Quaternion

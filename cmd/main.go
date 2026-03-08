@@ -7,9 +7,9 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/amar-jay/amaros/core"
-	"github.com/amar-jay/amaros/msgs"
-	"github.com/amar-jay/amaros/topic"
+	"github.com/amar-jay/amaros/pkg/core"
+	"github.com/amar-jay/amaros/pkg/msgs"
+	"github.com/amar-jay/amaros/pkg/topic"
 	"github.com/urfave/cli/v2"
 )
 

@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/amar-jay/amaros/msgs"
-	"github.com/amar-jay/amaros/node"
+	"github.com/amar-jay/amaros/pkg/msgs"
+	"github.com/amar-jay/amaros/pkg/node"
 )
 
 func main() {
