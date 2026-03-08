@@ -11,7 +11,7 @@ import (
 	"syscall"
 
 	ilog "github.com/amar-jay/amaros/internal/logger"
-	"github.com/amar-jay/amaros/msgs"
+	"github.com/amar-jay/amaros/pkg/msgs"
 )
 
 type Topic struct {
