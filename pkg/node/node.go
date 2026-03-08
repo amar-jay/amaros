@@ -6,8 +6,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/amar-jay/amaros/msgs"
-	"github.com/amar-jay/amaros/topic"
+	"github.com/amar-jay/amaros/pkg/msgs"
+	"github.com/amar-jay/amaros/pkg/topic"
 )
 
 type Node struct {

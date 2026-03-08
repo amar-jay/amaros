@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	ilog "github.com/amar-jay/amaros/internal/logger"
-	t "github.com/amar-jay/amaros/topic"
+	t "github.com/amar-jay/amaros/pkg/topic"
 )
 
 // hmmm! A synchronous map will be more useful here. However, this is just a simple example
