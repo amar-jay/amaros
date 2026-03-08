@@ -1,28 +1,26 @@
 package topic
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	ilog "github.com/amar-jay/amaros/internal/logger"
 	"github.com/amar-jay/amaros/pkg/msgs"
+	msgpack "github.com/shamaton/msgpack/v2"
 )
 
 type Topic struct {
-	Name    string `json:"name"`
-	Type    string
-	Message interface{} `json:"message,omitempty"`
+	Name    string      `json:"name" msgpack:"name"`
+	Type    string      `json:"type,omitempty" msgpack:"type,omitempty"`
+	Message interface{} `json:"message,omitempty" msgpack:"message,omitempty"`
 }
 
 type Status struct {
-	Subscribers map[string]int `json:"subscribers"`
-	Type        string         `json:"type"`
+	Subscribers map[string]int `json:"subscribers" msgpack:"subscribers"`
+	Type        string         `json:"type" msgpack:"type"`
 }
 
 var topics = make([]Topic, 0)
@@ -42,8 +40,19 @@ func DialServer(address string) net.Conn {
 	return conn
 }
 
+func writeEnvelope(conn net.Conn, env msgs.Envelope) error {
+	data, err := msgpack.Marshal(env)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Write(data)
+	return err
+}
+
 func handleUnsubscribe(conn net.Conn, topic string) {
-	fmt.Fprintf(conn, "UNSUBSCRIBE %s\n", topic)
+	if err := writeEnvelope(conn, msgs.Envelope{Cmd: msgs.CmdUnsubscribe, Topic: topic}); err != nil {
+		logger.Error("Failed to send UNSUBSCRIBE:", err)
+	}
 	logger.WithFields(map[string]interface{}{
 		"topic": topic,
 	}).Debug("Unsubscribed from topic")
@@ -56,7 +65,6 @@ type CallbackContext struct {
 }
 
 func handleSubscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback func(CallbackContext)) {
-	reader := bufio.NewReader(conn)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -66,59 +74,67 @@ func handleSubscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback fun
 	}()
 
 	for {
-		message, err := reader.ReadString('\n')
-		if err != nil {
+		var env msgs.Envelope
+		if err := msgpack.UnmarshalRead(conn, &env); err != nil {
 			logger.Error("Server disconnected:", err)
 			return
 		}
-		message = strings.TrimSpace(message)
-		m := strings.SplitAfterN(message, " ", 2)
-		if len(m) < 2 {
-			logger.Error("Invalid message from server:", m, len(m))
-		}
 
-		_topic, message := m[0], m[1]
-		message = strings.TrimSpace(message)
-		if len(message) == 0 {
+		if env.Cmd == msgs.RespError {
+			logger.Error("Server error:", env.Err)
 			continue
 		}
 
-		err = json.Unmarshal([]byte(message), &msg)
+		if env.Cmd == msgs.RespOK {
+			// subscribe acknowledgment, no action needed
+			continue
+		}
 
-		if err != nil {
-			logger.Error("Unmarshal json error", err)
+		if env.Cmd != msgs.RespMessage {
+			logger.Error("Unexpected message type:", env.Cmd)
+			continue
+		}
+
+		if len(env.Payload) == 0 {
+			continue
+		}
+
+		if err := msgpack.Unmarshal(env.Payload, msg); err != nil {
+			logger.Error("Unmarshal msgpack error:", err)
 			continue
 		}
 
 		// put it in type msg
-		//logger.Debug("message received type: ", reflect.TypeOf(&msg).String())
 		if logger == nil {
 			println("No logger present")
 		}
 
-		if strings.TrimSpace(_topic) == topic && callback != nil {
+		if env.Topic == topic && callback != nil {
 			callback(CallbackContext{Logger: logger, Params: ""})
 		}
 	}
 }
 
 func handleStatus(conn net.Conn, topic string) {
-	reader := bufio.NewReader(conn)
-	message, err := reader.ReadString('\n')
-	if err != nil {
+	var env msgs.Envelope
+	if err := msgpack.UnmarshalRead(conn, &env); err != nil {
 		logger.Error("Server disconnected.", err)
 		return
 	}
-	message = strings.TrimSpace(message)
-	if len(message) == 0 {
+
+	if env.Cmd == msgs.RespError {
+		logger.Error("Server error:", env.Err)
+		return
+	}
+
+	if env.Cmd != msgs.RespStatus {
+		logger.Error("Unexpected response type:", env.Cmd)
 		return
 	}
 
 	var msg Status
-
-	err = json.Unmarshal([]byte(message), &msg)
-	if err != nil {
-		logger.Error("Unmarshal json error", err)
+	if err := msgpack.Unmarshal(env.Payload, &msg); err != nil {
+		logger.Error("Unmarshal msgpack error:", err)
 		return
 	}
 	logger.WithFields(map[string]interface{}{
@@ -129,20 +145,24 @@ func handleStatus(conn net.Conn, topic string) {
 }
 
 func handleList(conn net.Conn) {
-	reader := bufio.NewReader(conn)
-	message, err := reader.ReadString('\n')
-	if err != nil {
+	var env msgs.Envelope
+	if err := msgpack.UnmarshalRead(conn, &env); err != nil {
 		logger.Error("Server disconnected.", err)
 		return
 	}
-	message = strings.TrimSpace(message)
-	if len(message) == 0 {
+
+	if env.Cmd == msgs.RespError {
+		logger.Error("Server error:", env.Err)
 		return
 	}
 
-	err = json.Unmarshal([]byte(message), &topics)
-	if err != nil {
-		logger.Error("Unmarshal json error: ", message, "\n", err)
+	if env.Cmd != msgs.RespList {
+		logger.Error("Unexpected response type:", env.Cmd)
+		return
+	}
+
+	if err := msgpack.Unmarshal(env.Payload, &topics); err != nil {
+		logger.Error("Unmarshal msgpack error:", env.Cmd, err)
 		return
 	}
 	for _, topic := range topics {
@@ -151,26 +171,38 @@ func handleList(conn net.Conn) {
 }
 
 func Publish(conn net.Conn, topic string, message msgs.ROS_MSG) {
-	msg, err := json.Marshal(message)
+	payload, err := msgpack.Marshal(message)
 	if err != nil {
-		logger.Error("invalid message type. unable to parse message")
+		logger.Error("invalid message type. unable to marshal message:", err)
+		return
 	}
 
-	// Send PUBLISH command to server
-	fmt.Fprintf(conn, "PUBLISH %s %s\n", topic, msg)
+	if err := writeEnvelope(conn, msgs.Envelope{Cmd: msgs.CmdPublish, Topic: topic, Payload: payload}); err != nil {
+		logger.Error("Failed to send PUBLISH:", err)
+	}
 }
 
 func Subscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback func(CallbackContext)) {
-	fmt.Fprintf(conn, "SUBSCRIBE %s %T\n", topic, msg)
+	topicType := fmt.Sprintf("%T", msg)
+	if err := writeEnvelope(conn, msgs.Envelope{Cmd: msgs.CmdSubscribe, Topic: topic, TopicType: topicType}); err != nil {
+		logger.Error("Failed to send SUBSCRIBE:", err)
+		return
+	}
 	handleSubscribe(conn, topic, msg, callback)
 }
 
 func List(conn net.Conn) {
-	fmt.Fprintf(conn, "LIST\n")
+	if err := writeEnvelope(conn, msgs.Envelope{Cmd: msgs.CmdList}); err != nil {
+		logger.Error("Failed to send LIST:", err)
+		return
+	}
 	handleList(conn)
 }
 
 func SubscribeStatus(conn net.Conn, topic string) {
-	fmt.Fprintf(conn, "STATUS %s\n", topic)
+	if err := writeEnvelope(conn, msgs.Envelope{Cmd: msgs.CmdStatus, Topic: topic}); err != nil {
+		logger.Error("Failed to send STATUS:", err)
+		return
+	}
 	handleStatus(conn, topic)
 }
