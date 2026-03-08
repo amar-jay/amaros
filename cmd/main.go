@@ -21,7 +21,7 @@ func main() {
 		Commands: []*cli.Command{
 			{
 				Name:        "core",
-				Usage:       "start a ROS core server",
+				Usage:       "start a master server",
 				Subcommands: []*cli.Command{},
 				Flags: []cli.Flag{
 					&cli.StringFlag{
