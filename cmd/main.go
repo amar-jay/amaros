@@ -25,9 +25,14 @@ func main() {
 				Subcommands: []*cli.Command{},
 				Flags: []cli.Flag{
 					&cli.StringFlag{
-						Name:  "port",
+						Name:  "tx_port",
 						Value: "11311",
-						Usage: "ROS master port",
+						Usage: "amaros TX port",
+					},
+					&cli.StringFlag{
+						Name:  "rx_port",
+						Value: "11312",
+						Usage: "amaros RX port",
 					},
 
 					&cli.StringFlag{
@@ -44,7 +49,8 @@ func main() {
 				},
 				Action: func(cCtx *cli.Context) error {
 					host := cCtx.String("host")
-					port := cCtx.Int("port")
+					tx_port := cCtx.Int("tx_port")
+					rx_port := cCtx.Int("rx_port")
 
 					r := core.NewCore()
 					if cCtx.Bool("debug") {

@@ -13,7 +13,7 @@ import (
 type Node struct {
 	Name       string
 	onshutdown func()
-	callback   func() // to listen for messages
+	callback   func(topic.CallbackContext) // to listen for messages
 	conn       net.Conn
 }
 
@@ -42,7 +42,7 @@ func (n *Node) OnShutdown(f func()) {
 	n.onshutdown = f
 }
 
-func (n *Node) Callback(f func()) {
+func (n *Node) Callback(f func(topic.CallbackContext)) {
 	n.callback = f
 }
 func (p *Node) Publish(_topic string, msg interface{}) {

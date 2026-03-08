@@ -51,6 +51,7 @@ func handleUnsubscribe(conn net.Conn, topic string) {
 
 type CallbackContext struct {
 	Logger *ilog.Logger // not well written right, never mind it should be left so.
+	Params string
 	// add more fields as needed
 }
 
@@ -91,9 +92,12 @@ func handleSubscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback fun
 
 		// put it in type msg
 		//logger.Debug("message received type: ", reflect.TypeOf(&msg).String())
+		if logger == nil {
+			println("No logger present")
+		}
 
 		if strings.TrimSpace(_topic) == topic && callback != nil {
-			callback(CallbackContext{Logger: logger})
+			callback(CallbackContext{Logger: logger, Params: ""})
 		}
 	}
 }

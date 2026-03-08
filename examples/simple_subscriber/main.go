@@ -6,6 +6,7 @@ import (
 
 	"github.com/amar-jay/amaros/msgs"
 	"github.com/amar-jay/amaros/node"
+	"github.com/amar-jay/amaros/topic"
 )
 
 func main() {
@@ -24,7 +25,7 @@ func main() {
 	*/
 
 	t := &msgs.Quaternion{}
-	node.Callback(func() {
+	node.Callback(func(ctx topic.CallbackContext) {
 		fmt.Printf("%v\n", t)
 		println(time.Now().String(), "callback called")
 	})

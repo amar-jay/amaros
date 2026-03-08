@@ -15,13 +15,4 @@ package registry
 // mavlink modes; mavlink nodes integrates with the mavlink api to communicate with drones/rovers. using the topic actions and states can be queried. it contains a number of inner sensor nodes
 // this is a broader description. a step by step first, first let's build the registry(folders and local and remote service), then we will think about the rest.
 
-type RegistryInfo struct {
-	Name       string
-	Author     string
-	CreatedAt  string
-	LocalPath  string
-	RemotePath string // if any
-}
-type Registry interface {
-	Info() RegistryInfo
-}
+// FIRST STEP! CREATE A REGISTRY, IT HAS
