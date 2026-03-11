@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"time"
@@ -15,21 +14,23 @@ import (
 )
 
 const (
-	defaultModel   = "openrouter/free"
-	requestTopic   = "/llm.request"
-	responseTopic  = "/llm.response"
-	requestTimeout = 60 * time.Second
+	defaultModel  = "openrouter/free"
+	taskTopic     = "/llm.execute.task"
+	questionTopic = "/llm.execute.question"
+	responseTopic = "/llm.execute.response"
+	resultTopic   = "/llm.execute.result"
+	maxIterations = 50
+	cmdTimeout    = 30 * time.Second
+	llmTimeout    = 60 * time.Second
+	responseWait  = 120 * time.Second
 )
 
 var (
 	conf     *config.Config
-	llmNode  *node.Node
-	llmReq   = &msgs.LLMRequest{}
+	execNode *node.Node
+	task     = &msgs.ExecuteTask{}
 	provider model.Provider
 )
-
-const sysPromptPrefix = `
-`
 
 func init() {
 	conf = config.Get()
@@ -43,90 +44,44 @@ func init() {
 
 	provider = openrouter.New(apiKey)
 
-	llmNode = node.Init("llm_inference")
-	llmNode.OnShutdown(func() {
-		fmt.Println("shutting down llm_inference node")
+	execNode = node.Init("llm_execute")
+	execNode.OnShutdown(func() {
+		fmt.Println("shutting down llm_execute node")
 	})
 }
 
-func onRequest(ctx topic.CallbackContext) {
-	// Copy the current request to avoid sharing the global pointer with future callbacks.
-	req := *llmReq
-	if req.Prompt == "" {
-		ctx.Logger.Warn("received empty prompt, skipping")
-		return
-	}
-
-	modelName := req.Model
-	if modelName == "" {
-		modelName = defaultModel
-	}
-
-	messages := make([]model.Message, 0, 2)
-	if req.SystemPrompt != "" {
-		messages = append(messages, model.Message{
-			Role:    model.RoleSystem,
-			Content: req.SystemPrompt,
-		})
-	}
-	messages = append(messages, model.Message{
-		Role:    model.RoleUser,
-		Content: req.Prompt,
-	})
-
-	compReq := model.CompletionRequest{
-		Model:       modelName,
-		Messages:    messages,
-		MaxTokens:   req.MaxTokens,
-		Temperature: req.Temperature,
-	}
-
-	ctx.Logger.WithFields(map[string]interface{}{
-		"model":  modelName,
-		"prompt": req.Prompt,
-	}).Info("sending LLM request")
-
-	callCtx, cancel := context.WithTimeout(context.Background(), requestTimeout)
-	defer cancel()
-
-	resp, err := provider.Complete(callCtx, compReq)
-	if err != nil {
-		ctx.Logger.WithFields(map[string]interface{}{
-			"error": err.Error(),
-		}).Error("LLM request failed")
+func onTask(ctx topic.CallbackContext) {
+	t := *task
+	if t.Description == "" {
+		ctx.Logger.Warn("received empty task, skipping")
 		return
 	}
 
 	ctx.Logger.WithFields(map[string]interface{}{
-		"model":             resp.Model,
-		"prompt_tokens":     resp.Usage.PromptTokens,
-		"completion_tokens": resp.Usage.CompletionTokens,
-	}).Info("LLM response: %s", resp.Content)
+		"task_id":     t.TaskID,
+		"description": t.Description,
+	}).Info("received task, starting agentic loop")
 
-	llmNode.Publish(responseTopic, &msgs.LLMResponse{
-		Content:          resp.Content,
-		Model:            resp.Model,
-		PromptTokens:     resp.Usage.PromptTokens,
-		CompletionTokens: resp.Usage.CompletionTokens,
-		TotalTokens:      resp.Usage.TotalTokens,
-	})
+	agent := NewAgent(provider, execNode, maxIterations)
+	agent.Run(&t)
 }
 
-// llm_inference is a node that bridges the amaros pub/sub system with the
-// OpenRouter LLM API. It subscribes to /llm/request and publishes responses
-// to /llm/response.
+// llm_execute is an agentic node that receives task descriptions on
+// /llm.execute.task and autonomously executes them by running shell
+// commands in a loop. It uses an LLM to decide the next action at
+// each step.
 //
-// Configuration (via ~/.config/amaros/config.yaml or environment variables):
+// Topics:
 //
-//	openrouter:
-//	  api_key: "<your OpenRouter API key>"
-//
-// Or set AMAROS_OPENROUTER_API_KEY in the environment.
+//	subscribes: /llm.execute.task     — incoming task descriptions
+//	publishes:  /llm.execute.question — questions for the user
+//	subscribes: /llm.execute.response — user answers (temporary)
+//	publishes:  /llm.execute.result   — final task result
 func main() {
-	fmt.Printf("llm_inference node started\n")
-	fmt.Printf("  subscribed to: %s\n", requestTopic)
-	fmt.Printf("  publishing to: %s\n", responseTopic)
+	fmt.Println("llm_execute node started")
+	fmt.Printf("  subscribed to: %s\n", taskTopic)
+	fmt.Printf("  publishes to:  %s, %s\n", questionTopic, resultTopic)
 
-	llmNode.Callback(onRequest)
-	llmNode.Subscribe(requestTopic, llmReq)
+	execNode.Callback(onTask)
+	execNode.Subscribe(taskTopic, task)
 }

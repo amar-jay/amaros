@@ -21,3 +21,35 @@ type LLMResponse struct {
 	CompletionTokens int    `json:"completion_tokens,omitempty" msgpack:"completion_tokens,omitempty"`
 	TotalTokens      int    `json:"total_tokens,omitempty" msgpack:"total_tokens,omitempty"`
 }
+
+// ExecuteTask is published to /llm.execute.task to trigger an agentic task execution.
+type ExecuteTask struct {
+	ROS_MSG
+	TaskID      string `json:"task_id" msgpack:"task_id"`
+	Description string `json:"description" msgpack:"description"`
+}
+
+// ExecuteQuestion is published to /llm.execute.question when the agent needs user input.
+type ExecuteQuestion struct {
+	ROS_MSG
+	TaskID   string `json:"task_id" msgpack:"task_id"`
+	QuestionID string `json:"question_id" msgpack:"question_id"`
+	Question string `json:"question" msgpack:"question"`
+}
+
+// ExecuteResponse is published to /llm.execute.response with the user's answer.
+type ExecuteResponse struct {
+	ROS_MSG
+	TaskID   string `json:"task_id" msgpack:"task_id"`
+	QuestionID string `json:"question_id" msgpack:"question_id"`
+	Response string `json:"response" msgpack:"response"`
+}
+
+// ExecuteResult is published to /llm.execute.result when the task completes.
+type ExecuteResult struct {
+	ROS_MSG
+	TaskID  string `json:"task_id" msgpack:"task_id"`
+	Success bool   `json:"success" msgpack:"success"`
+	Summary string `json:"summary" msgpack:"summary"`
+	Output  string `json:"output" msgpack:"output"`
+}

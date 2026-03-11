@@ -24,10 +24,21 @@ func main() {
 			 * Tried other ways but does not have type safety nearly as good as this.
 	*/
 
-	t := &msgs.Quaternion{}
+	t := &msgs.ExecuteResult{}
 	node.Callback(func(ctx topic.CallbackContext) {
 		fmt.Printf("%v\n", t)
+		// if there is a question, answer it through cli
+		if t.Success {
+			ctx.Logger.WithFields(map[string]interface{}{
+				"summary": t.Summary,
+			}).Info(t.Output)
+		} else {
+			ctx.Logger.WithFields(map[string]interface{}{
+				"summary": t.Summary,
+			}).Error("Received error")
+			fmt.Printf("Error : %s\n", t.Output)
+		}
 		println(time.Now().String(), "callback called")
 	})
-	node.Subscribe("/chatter", t)
+	node.Subscribe("/llm.execute.result", t)
 }
