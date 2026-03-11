@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -100,6 +101,12 @@ func Load() (*Config, error) {
 	if err := viper.Unmarshal(cfg); err != nil {
 		return nil, err
 	}
+
+	p, err := expandPath(cfg.Registry.Path)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Registry.Path = p
 	return cfg, nil
 }
 
@@ -116,4 +123,15 @@ func Get() *Config {
 func Set(key string, value interface{}) {
 	viper.Set(key, value)
 	cfg = nil // force reload on next Get()
+}
+
+func expandPath(p string) (string, error) {
+	if strings.HasPrefix(p, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, p[1:]), nil
+	}
+	return p, nil
 }

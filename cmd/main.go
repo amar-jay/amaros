@@ -2,13 +2,16 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/amar-jay/amaros/pkg/core"
 	"github.com/amar-jay/amaros/pkg/msgs"
+	"github.com/amar-jay/amaros/pkg/registry"
 	"github.com/amar-jay/amaros/pkg/topic"
 	"github.com/urfave/cli/v2"
 )
@@ -17,11 +20,11 @@ func main() {
 	app := &cli.App{
 		Name:                 "amaros",
 		EnableBashCompletion: true,
-		Usage:                "a simple agentic orchestrator in Go",
+		Usage:                "an agentic orchestrator in Go",
 		Commands: []*cli.Command{
 			{
 				Name:        "core",
-				Usage:       "start a master server",
+				Usage:       "start master server",
 				Subcommands: []*cli.Command{},
 				Flags: []cli.Flag{
 					&cli.StringFlag{
@@ -66,6 +69,262 @@ func main() {
 				Subcommands: []*cli.Command{},
 			},
 			{
+				Name:    "registry",
+				Usage:   "manage AMAROS node registry",
+				Aliases: []string{"reg"},
+				Subcommands: []*cli.Command{
+					{
+						Name:    "search",
+						Aliases: []string{"s"},
+						Usage:   "search for nodes in the remote registry",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:    "tag",
+								Aliases: []string{"t"},
+								Usage:   "filter by exact tag",
+							},
+						},
+						Action: func(cCtx *cli.Context) error {
+							reg, err := registry.New()
+							if err != nil {
+								return err
+							}
+
+							query := cCtx.Args().First()
+							tag := cCtx.String("tag")
+
+							var results []registry.SearchResult
+							if tag != "" {
+								results, err = reg.SearchByTag(tag)
+							} else if query != "" {
+								results, err = reg.Search(query)
+							} else {
+								results, err = reg.ListRemote()
+							}
+							if err != nil {
+								return err
+							}
+
+							if len(results) == 0 {
+								fmt.Println("No nodes found.")
+								return nil
+							}
+
+							for _, r := range results {
+								fmt.Printf("  %-20s %-8s  %s\n", r.Name, r.Latest, r.Description)
+							}
+							fmt.Printf("\n%d node(s) found.\n", len(results))
+							return nil
+						},
+					},
+					{
+						Name:    "install",
+						Aliases: []string{"add", "i"},
+						Usage:   "install a node from the remote registry",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:    "version",
+								Aliases: []string{"v"},
+								Usage:   "specific version to install (default: latest)",
+							},
+						},
+						Action: func(cCtx *cli.Context) error {
+							if cCtx.NArg() == 0 {
+								return fmt.Errorf("node name is required")
+							}
+							reg, err := registry.New()
+							if err != nil {
+								return err
+							}
+							return reg.Install(cCtx.Args().First(), cCtx.String("version"))
+						},
+					},
+					{
+						Name:    "uninstall",
+						Aliases: []string{"remove", "rm"},
+						Usage:   "uninstall a locally installed node",
+						Action: func(cCtx *cli.Context) error {
+							if cCtx.NArg() == 0 {
+								return fmt.Errorf("node name is required")
+							}
+							reg, err := registry.New()
+							if err != nil {
+								return err
+							}
+							return reg.Uninstall(cCtx.Args().First())
+						},
+					},
+					{
+						Name:    "upgrade",
+						Aliases: []string{"up"},
+						Usage:   "upgrade a node to its latest version",
+						Action: func(cCtx *cli.Context) error {
+							if cCtx.NArg() == 0 {
+								return fmt.Errorf("node name is required")
+							}
+							reg, err := registry.New()
+							if err != nil {
+								return err
+							}
+							return reg.Upgrade(cCtx.Args().First())
+						},
+					},
+					{
+						Name:    "list",
+						Aliases: []string{"ls"},
+						Usage:   "list available nodes",
+						Flags: []cli.Flag{
+							&cli.BoolFlag{
+								Name:  "remote",
+								Usage: "list remote nodes",
+							},
+							&cli.BoolFlag{
+								Name:  "all",
+								Usage: "list all nodes (remote and local)",
+							},
+						},
+						Action: func(cCtx *cli.Context) error {
+
+							if cCtx.Bool("remote") && cCtx.Bool("all") {
+								return fmt.Errorf("--remote and --all cannot be used together")
+							}
+
+							reg, err := registry.New()
+							if err != nil {
+								return err
+							}
+
+							nodes := []map[string]string{}
+
+							switch {
+							case cCtx.Bool("all"):
+
+								local, err := reg.List()
+								if err != nil {
+									return err
+								}
+
+								for _, n := range local {
+									nodes = append(nodes, map[string]string{
+										"name":    n.Name,
+										"version": n.Version + " (installed)",
+									})
+								}
+
+								remote, err := reg.ListRemote()
+								if err != nil {
+									return err
+								}
+
+								for _, r := range remote {
+									nodes = append(nodes, map[string]string{
+										"name":    r.Name,
+										"version": r.Latest,
+									})
+								}
+
+							case cCtx.Bool("remote"):
+
+								remote, err := reg.ListRemote()
+								if err != nil {
+									return err
+								}
+
+								for _, r := range remote {
+									nodes = append(nodes, map[string]string{
+										"name":    r.Name,
+										"version": r.Latest,
+									})
+								}
+
+							default:
+
+								local, err := reg.List()
+								if err != nil {
+									return err
+								}
+
+								for _, n := range local {
+									nodes = append(nodes, map[string]string{
+										"name":    n.Name,
+										"version": n.Version,
+									})
+								}
+							}
+
+							if len(nodes) == 0 {
+								fmt.Println("No nodes found.")
+								return nil
+							}
+
+							for _, n := range nodes {
+								fmt.Printf("  %-20s %s\n", n["name"], n["version"])
+							}
+
+							fmt.Printf("\n%d node(s) available.\n", len(nodes))
+							return nil
+						},
+					},
+					{
+						Name:  "info",
+						Usage: "show detailed information about a node",
+						Action: func(cCtx *cli.Context) error {
+							if cCtx.NArg() == 0 {
+								return fmt.Errorf("node name is required")
+							}
+							reg, err := registry.New()
+							if err != nil {
+								return err
+							}
+							manifest, _, err := reg.Info(cCtx.Args().First())
+							if err != nil {
+								return err
+							}
+
+							fmt.Printf("Name:         %s\n", manifest.Name)
+							fmt.Printf("Description:  %s\n", manifest.Description)
+							fmt.Printf("Author:       %s\n", manifest.Author)
+							if manifest.Organization != "" {
+								fmt.Printf("Organization: %s\n", manifest.Organization)
+							}
+							fmt.Printf("License:      %s\n", manifest.License)
+							if manifest.Repository != "" {
+								fmt.Printf("Repository:   %s\n", manifest.Repository)
+							}
+							fmt.Printf("Latest:       %s\n", manifest.Latest)
+							fmt.Printf("Tags:         %s\n", strings.Join(manifest.Tags, ", "))
+							fmt.Printf("Capabilities: %s\n", strings.Join(manifest.Capabilities, ", "))
+							fmt.Printf("Subscribes:   %s\n", strings.Join(manifest.SubscribesTo, ", "))
+							fmt.Printf("Publishes:    %s\n", strings.Join(manifest.PublishesTo, ", "))
+							fmt.Printf("Versions:\n")
+							for _, v := range manifest.Versions {
+								fmt.Printf("  %s  (%s, %d downloads)\n", v.Version, v.PublishedAt, v.Downloads)
+							}
+							return nil
+						},
+					},
+					{
+						Name:  "readme",
+						Usage: "show the readme for a node",
+						Action: func(cCtx *cli.Context) error {
+							if cCtx.NArg() == 0 {
+								return fmt.Errorf("node name is required")
+							}
+							reg, err := registry.New()
+							if err != nil {
+								return err
+							}
+							content, err := reg.Readme(cCtx.Args().First())
+							if err != nil {
+								return err
+							}
+							fmt.Println(content)
+							return nil
+						},
+					},
+				},
+			},
+			{
 				Name:  "topic",
 				Usage: "run topic methods",
 
@@ -89,7 +348,7 @@ func main() {
 						Name:     "publish",
 						Category: "topic",
 						Aliases:  []string{"pub"},
-						Usage:    "publish a ROS topic",
+						Usage:    "publish a topic",
 
 						Flags: []cli.Flag{
 							&cli.StringFlag{
@@ -143,7 +402,7 @@ func main() {
 						Name:     "subscribe",
 						Category: "topic",
 						Aliases:  []string{"sub"},
-						Usage:    "subscribe to a ROS topic",
+						Usage:    "subscribe to a topic",
 						Action: func(cCtx *cli.Context) error {
 							if cCtx.NArg() == 0 {
 								log.Fatal("Topic name is required")
@@ -167,7 +426,7 @@ func main() {
 						Name:     "status",
 						Aliases:  []string{"stats", "stat"},
 						Category: "topic",
-						Usage:    "get stats of a ROS topic",
+						Usage:    "get stats on a topic",
 						Action: func(cCtx *cli.Context) error {
 							if cCtx.NArg() == 0 {
 								log.Fatal("Topic name is required")
