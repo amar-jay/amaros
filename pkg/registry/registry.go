@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/amar-jay/amaros/internal/config"
 	ilog "github.com/amar-jay/amaros/internal/logger"
 )
 
@@ -21,38 +21,68 @@ type Registry struct {
 
 // New creates a Registry backed by the given remote base URL and
 // local root directory (typically ~/.config/amaros).
-func New(baseURL, rootDir string) (*Registry, error) {
-	store, err := NewStore(rootDir)
+func New() (*Registry, error) {
+	cfg := config.Get()
+	if cfg == nil || cfg.Registry.Path == "" {
+		return nil, fmt.Errorf("registry: root directory config error")
+	}
+	store, err := NewStore(cfg.Registry.Path)
 	if err != nil {
 		return nil, fmt.Errorf("registry: init store: %w", err)
 	}
 	return &Registry{
-		Client: NewClient(baseURL),
+		Client: NewClient(cfg.Registry.APIURL),
 		Store:  store,
 		logger: ilog.New(),
 	}, nil
 }
 
 // Search queries the remote registry for nodes matching the given term.
-// It fetches the full index and filters by name, description, tags,
-// and capabilities.
 func (r *Registry) Search(query string) ([]SearchResult, error) {
-	idx, err := r.Client.FetchIndex()
+	nodes, err := r.Client.ListNodes(query, "")
 	if err != nil {
 		return nil, err
 	}
-	return idx.Search(query), nil
+	var results []SearchResult
+	for _, m := range nodes {
+		results = append(results, SearchResult{
+			Name:        m.Name,
+			Description: m.Description,
+			Latest:      m.Latest,
+			Downloads:   m.TotalDownloads(),
+		})
+	}
+	return results, nil
+}
+
+// SearchByTag queries the remote registry for nodes with an exact tag match.
+func (r *Registry) SearchByTag(tag string) ([]SearchResult, error) {
+	nodes, err := r.Client.ListNodes("", tag)
+	if err != nil {
+		return nil, err
+	}
+	var results []SearchResult
+	for _, m := range nodes {
+		results = append(results, SearchResult{
+			Name:        m.Name,
+			Description: m.Description,
+			Latest:      m.Latest,
+			Downloads:   m.TotalDownloads(),
+		})
+	}
+	return results, nil
 }
 
 // Info fetches detailed information about a node from the remote registry.
-func (r *Registry) Info(name string) (*NodeManifest, error) {
+// Returns the manifest and its readme.
+func (r *Registry) Info(name string) (*NodeManifest, string, error) {
 	return r.Client.GetManifest(name)
 }
 
 // Install downloads a node version from the remote registry and installs
 // it locally. If version is empty, the latest version is used.
 func (r *Registry) Install(name, version string) error {
-	manifest, err := r.Client.GetManifest(name)
+	manifest, readme, err := r.Client.GetManifest(name)
 	if err != nil {
 		return fmt.Errorf("registry: fetch manifest: %w", err)
 	}
@@ -94,8 +124,6 @@ func (r *Registry) Install(name, version string) error {
 			name, version, vi.Checksum, actual)
 	}
 
-	readme, _ := r.Client.GetReadme(name)
-
 	if err := r.Store.Install(manifest, vi, tarball, readme); err != nil {
 		return fmt.Errorf("registry: install: %w", err)
 	}
@@ -128,16 +156,15 @@ func (r *Registry) List() ([]InstalledNode, error) {
 	return r.Store.ListInstalled()
 }
 
-// ListRemote returns all nodes available in the remote registry, sorted
-// by total downloads descending.
+// ListRemote returns all nodes available in the remote registry.
 func (r *Registry) ListRemote() ([]SearchResult, error) {
-	idx, err := r.Client.FetchIndex()
+	nodes, err := r.Client.ListNodes("", "")
 	if err != nil {
 		return nil, err
 	}
 
 	var results []SearchResult
-	for _, m := range idx.Nodes {
+	for _, m := range nodes {
 		results = append(results, SearchResult{
 			Name:        m.Name,
 			Description: m.Description,
@@ -151,13 +178,18 @@ func (r *Registry) ListRemote() ([]SearchResult, error) {
 	return results, nil
 }
 
-// Readme returns the readme for a node. It first checks local, then remote.
+// Readme returns the readme for a node. It checks local first, then remote.
 func (r *Registry) Readme(name string) (string, error) {
 	// try local first
 	if content, err := r.Store.GetReadme(name); err == nil {
 		return content, nil
 	}
-	return r.Client.GetReadme(name)
+	// fall back to remote
+	_, readme, err := r.Client.GetManifest(name)
+	if err != nil {
+		return "", err
+	}
+	return readme, nil
 }
 
 // ── InstalledNode ───────────────────────────────────────────
@@ -270,9 +302,4 @@ func readJSON(path string, v interface{}) error {
 		return err
 	}
 	return json.Unmarshal(data, v)
-}
-
-// DefaultRootDir returns the standard AMAROS config directory.
-func DefaultRootDir() string {
-	return filepath.Join(os.Getenv("HOME"), ".config", "amaros")
 }

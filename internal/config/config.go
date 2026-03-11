@@ -26,7 +26,8 @@ type OpenRouterConfig struct {
 }
 
 type RegistryConfig struct {
-	Path string `mapstructure:"path"`
+	Path   string `mapstructure:"path"`
+	APIURL string `mapstructure:"api_url"`
 }
 
 type LogConfig struct {
@@ -44,7 +45,8 @@ openrouter:
   api_key: ""
 
 registry:
-  path: ""
+  path: "~/.config/amaros"
+  api_url: "https://amaros.vercel.app"
 
 log:
   level: "info"
@@ -77,7 +79,8 @@ func init() {
 	viper.SetDefault("core.tx_port", 11311)
 	viper.SetDefault("core.rx_port", 11312)
 	viper.SetDefault("openrouter.api_key", "")
-	viper.SetDefault("registry.path", filepath.Join(configDir, "registry"))
+	viper.SetDefault("registry.path", filepath.Join(configDir)) // perhaps within a subdirectory if it gets complicated
+	viper.SetDefault("registry.api_url", "https://amaros.vercel.app")
 	viper.SetDefault("log.level", "info")
 
 	// env overrides: AMAROS_CORE_TX_PORT, AMAROS_OPENROUTER_API_KEY, etc.

@@ -7,111 +7,168 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
-// Client is an HTTP client for the remote AMAROS node registry (R2 bucket).
+const DefaultBaseURL = "https://amaros.vercel.app"
+
+// Client is an HTTP client for the AMAROS registry API.
 //
-// Bucket layout:
+// API:
 //
-//	nodes/{name}/metadata.json        — NodeManifest (JSON)
-//	nodes/{name}/readme.md            — Markdown readme
-//	nodes/{name}/versions/{v}.tar.gz  — Version tarball
+//	GET  /api/nodes              — list/search nodes
+//	GET  /api/nodes/:name        — node manifest + readme
+//	GET  /api/nodes/:name/:ver   — version metadata
+//	GET  /api/nodes/:name/:ver?download — download tarball
 type Client struct {
 	BaseURL string
 	http    *http.Client
 }
 
-// NewClient creates a Client pointing at the given R2 public bucket URL.
+// NewClient creates a Client pointing at the given registry API base URL.
 func NewClient(baseURL string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		http: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 60 * time.Second,
 		},
 	}
 }
 
-// get performs a GET and returns the response body bytes.
+// apiError is the JSON error body returned by the registry API.
+type apiError struct {
+	Error string `json:"error"`
+}
+
+// get performs a GET and returns the raw response body.
 func (c *Client) get(path string) ([]byte, error) {
-	url := c.BaseURL + "/" + path
-	resp, err := c.http.Get(url)
+	u := c.BaseURL + path
+	resp, err := c.http.Get(u)
 	if err != nil {
-		return nil, fmt.Errorf("registry client: request failed: %w", err)
+		return nil, fmt.Errorf("registry: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("registry client: not found: %s", path)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("registry client: unexpected status %d for %s", resp.StatusCode, path)
-	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("registry client: read body: %w", err)
+		return nil, fmt.Errorf("registry: read body: %w", err)
 	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		var ae apiError
+		if json.Unmarshal(body, &ae) == nil && ae.Error != "" {
+			return nil, fmt.Errorf("registry: %s", ae.Error)
+		}
+		return nil, fmt.Errorf("registry: not found: %s", path)
+	}
+	if resp.StatusCode != http.StatusOK {
+		var ae apiError
+		if json.Unmarshal(body, &ae) == nil && ae.Error != "" {
+			return nil, fmt.Errorf("registry: %s", ae.Error)
+		}
+		return nil, fmt.Errorf("registry: unexpected status %d for %s", resp.StatusCode, path)
+	}
+
 	return body, nil
 }
 
-// GetManifest fetches the manifest for a node by name.
-func (c *Client) GetManifest(name string) (*NodeManifest, error) {
-	data, err := c.get("nodes/" + name + "/metadata.json")
+// nodesListResponse is the JSON shape returned by GET /api/nodes.
+type nodesListResponse struct {
+	Nodes []NodeManifest `json:"nodes"`
+	Count int            `json:"count"`
+}
+
+// nodeDetailResponse is the JSON shape returned by GET /api/nodes/:name.
+// It extends NodeManifest with an inline readme field.
+type nodeDetailResponse struct {
+	NodeManifest
+	Readme string `json:"readme"`
+}
+
+// versionMetaResponse is the JSON shape returned by GET /api/nodes/:name/:version.
+type versionMetaResponse struct {
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	Checksum string `json:"checksum"`
+	Size     int    `json:"size"`
+}
+
+// ListNodes fetches all nodes from the remote registry.
+// Optional query filters by name/description/tags; optional tag filters by exact tag.
+func (c *Client) ListNodes(query, tag string) ([]NodeManifest, error) {
+	params := url.Values{}
+	if query != "" {
+		params.Set("q", query)
+	}
+	if tag != "" {
+		params.Set("tag", tag)
+	}
+
+	path := "/api/nodes"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	data, err := c.get(path)
 	if err != nil {
 		return nil, err
 	}
-	var m NodeManifest
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("registry client: invalid manifest for %q: %w", name, err)
+
+	var resp nodesListResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("registry: invalid nodes response: %w", err)
 	}
-	return &m, nil
+	return resp.Nodes, nil
 }
 
-// GetReadme fetches the readme markdown for a node.
-func (c *Client) GetReadme(name string) (string, error) {
-	data, err := c.get("nodes/" + name + "/readme.md")
+// GetManifest fetches the full manifest and readme for a node by name.
+func (c *Client) GetManifest(name string) (*NodeManifest, string, error) {
+	data, err := c.get("/api/nodes/" + name)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
-	return string(data), nil
+
+	var resp nodeDetailResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, "", fmt.Errorf("registry: invalid manifest for %q: %w", name, err)
+	}
+	return &resp.NodeManifest, resp.Readme, nil
+}
+
+// GetVersionMeta fetches metadata for a specific version of a node.
+// Use "latest" as the version to resolve to the newest release.
+func (c *Client) GetVersionMeta(name, version string) (*versionMetaResponse, error) {
+	data, err := c.get("/api/nodes/" + name + "/" + version)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp versionMetaResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("registry: invalid version response: %w", err)
+	}
+	return &resp, nil
 }
 
 // DownloadVersion downloads the tarball for a specific node version.
 func (c *Client) DownloadVersion(name, version string) ([]byte, error) {
-	return c.get("nodes/" + name + "/versions/" + version + ".tar.gz")
+	return c.get("/api/nodes/" + name + "/" + version + "?download")
 }
 
-// FetchIndex fetches manifests for all known seed nodes and returns
-// a searchable Index. In the future this will query an index endpoint;
-// for now it fetches each known node individually.
+// FetchIndex fetches all remote nodes and returns a searchable Index.
 func (c *Client) FetchIndex() (*Index, error) {
+	nodes, err := c.ListNodes("", "")
+	if err != nil {
+		return nil, err
+	}
 	idx := NewIndex()
-	for _, name := range KnownNodes() {
-		m, err := c.GetManifest(name)
-		if err != nil {
-			continue // skip unavailable nodes
-		}
-		idx.Add(m)
+	for i := range nodes {
+		n := nodes[i]
+		idx.Add(&n)
 	}
 	return idx, nil
-}
-
-// KnownNodes returns the names of all nodes seeded in the R2 bucket.
-func KnownNodes() []string {
-	return []string{
-		"llm-inference",
-		"http-request",
-		"sqlite-store",
-		"msg-relay",
-		"web-scraper",
-		"cron-scheduler",
-		"vector-search",
-		"file-watcher",
-		"email-sender",
-		"json-transform",
-	}
 }
 
 // checksum returns the hex-encoded SHA-256 of data.
