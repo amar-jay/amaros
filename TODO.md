@@ -1,0 +1,6 @@
+- [ ] Cron jobs node 
+- [ ] memory hierarchy
+- [ ] messaging api (preferably telegram) 
+	- [ ] Also implement configuration for external API in hashmaps  
+- [ ] Image input to model
+- [ ] internet search node
