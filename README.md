@@ -16,9 +16,8 @@ This design allows for a highly modular and extensible system, where new capabil
 
 ## Libraries (used but not limited to)
 - Go
-- zmq4 - for inter-node communication
 - protobuf - for message serialization and comprehensive description of messages and events.
-- viper - for configuration management (~/.config/copilot/)
+- viper - for configuration management (~/.config/amaros/)
 - fiber - for human-facing node 
 - sqlite - for state management and memory, registry in sqlite
 - logrus - for logging
