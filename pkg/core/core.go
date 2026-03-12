@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"net"
 	"strconv"
 	"sync"
@@ -16,6 +17,7 @@ type Core struct {
 	mu          sync.RWMutex
 	Subscribers map[string][]net.Conn // map of topic to subscribers (connections)
 	Types       map[string]string     // ros topic types map
+	Metadata    map[string]msgs.TopicMetadata
 	logger      *ilog.Logger
 }
 
@@ -25,6 +27,7 @@ func NewCore() *Core {
 		mu:          sync.RWMutex{},
 		Subscribers: make(map[string][]net.Conn),
 		Types:       make(map[string]string),
+		Metadata:    make(map[string]msgs.TopicMetadata),
 		logger:      logger,
 	}
 }
@@ -166,13 +169,20 @@ func (r *Core) Unsubscribe(topic string, conn net.Conn) {
 }
 
 func (r *Core) Publish(topic string, payload []byte, conn net.Conn) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
 	if topic == "" {
 		writeEnvelope(conn, msgs.Envelope{Cmd: msgs.RespError, Err: "invalid publish: missing topic"})
 		return
 	}
+
+	if topic == t.MetadataTopicName {
+		if err := r.RecordMetadata(payload); err != nil {
+			writeEnvelope(conn, msgs.Envelope{Cmd: msgs.RespError, Err: err.Error()})
+			return
+		}
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 
 	fwd := msgs.Envelope{Cmd: msgs.RespMessage, Topic: topic, Payload: payload}
 	for _, sub := range r.Subscribers[topic] {
@@ -186,6 +196,24 @@ func (r *Core) Publish(topic string, payload []byte, conn net.Conn) {
 			}).Debug("Publishing message")
 		}
 	}
+}
+
+func (r *Core) RecordMetadata(payload []byte) error {
+	var meta msgs.TopicMetadata
+	if err := msgpack.Unmarshal(payload, &meta); err != nil {
+		return err
+	}
+	if meta.Topic == "" {
+		return fmt.Errorf("invalid topic metadata: missing topic")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Metadata[meta.Topic] = meta
+	if meta.Type != "" && r.Types[meta.Topic] == "" {
+		r.Types[meta.Topic] = meta.Type
+	}
+	return nil
 }
 
 func (r *Core) Status(topic string, conn net.Conn) {
@@ -205,10 +233,16 @@ func (r *Core) Status(topic string, conn net.Conn) {
 func (r *Core) List(conn net.Conn) {
 	topicList := make([]t.Topic, 0, len(r.Subscribers))
 	for topicName := range r.Subscribers {
+		meta := r.Metadata[topicName]
 		topicList = append(topicList, t.Topic{
 			Name:        topicName,
-			Type:        r.Types[topicName],
+			Type:        firstNonEmpty(r.Types[topicName], meta.Type),
 			Subscribers: len(r.Subscribers[topicName]),
+			OwnerNode:   meta.OwnerNode,
+			Purpose:     meta.Purpose,
+			RequestTopic: meta.RequestTopic,
+			ResponseTopic: meta.ResponseTopic,
+			ResponseType: meta.ResponseType,
 		})
 	}
 	payload, err := msgpack.Marshal(topicList)
@@ -218,4 +252,13 @@ func (r *Core) List(conn net.Conn) {
 	}
 
 	writeEnvelope(conn, msgs.Envelope{Cmd: msgs.RespList, Payload: payload})
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

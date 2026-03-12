@@ -91,7 +91,11 @@ type promptTopic struct {
 	Publishable bool
 	Waitable  bool
 	Subscribers int
+	OwnerNode string
 	Purpose   string
+	RequestTopic string
+	ResponseTopic string
+	ResponseType string
 	Source    string
 }
 
@@ -129,10 +133,7 @@ func buildPromptTopics(observedTopics []topic.Topic) []promptTopic {
 		runtimeTopics[observedTopic.Name] = existing
 	}
 
-	merged := make(map[string]promptTopic, len(runtimeTopics)+4)
-	for _, builtIn := range builtInPromptTopics(runtimeTopics) {
-		merged[builtIn.Name] = builtIn
-	}
+	merged := make(map[string]promptTopic, len(runtimeTopics))
 
 	for _, observedTopic := range runtimeTopics {
 		entry := promptTopic{
@@ -141,7 +142,11 @@ func buildPromptTopics(observedTopics []topic.Topic) []promptTopic {
 			Publishable: observedTopic.Subscribers > 0,
 			Waitable:    true,
 			Subscribers: observedTopic.Subscribers,
-			Purpose:     describeTopic(observedTopic.Name),
+			OwnerNode:   observedTopic.OwnerNode,
+			Purpose:     observedTopic.Purpose,
+			RequestTopic: observedTopic.RequestTopic,
+			ResponseTopic: observedTopic.ResponseTopic,
+			ResponseType: observedTopic.ResponseType,
 			Source:      "runtime",
 		}
 
@@ -174,52 +179,6 @@ func buildPromptTopics(observedTopics []topic.Topic) []promptTopic {
 	return result
 }
 
-func builtInPromptTopics(runtimeTopics map[string]topic.Topic) []promptTopic {
-	questionRuntime := runtimeTopics[questionTopic]
-	responseRuntime := runtimeTopics[responseTopic]
-	taskRuntime := runtimeTopics[taskTopic]
-	resultRuntime := runtimeTopics[resultTopic]
-
-	return []promptTopic{
-		{
-			Name:      taskTopic,
-			Type:      firstNonEmpty(taskRuntime.Type, "*msgs.ExecuteTask"),
-			Publishable: false,
-			Waitable:  false,
-			Subscribers: taskRuntime.Subscribers,
-			Purpose:   "incoming task requests for this executor",
-			Source:    "builtin",
-		},
-		{
-			Name:      questionTopic,
-			Type:      firstNonEmpty(questionRuntime.Type, "*msgs.ExecuteQuestion"),
-			Publishable: questionRuntime.Subscribers > 0,
-			Waitable:  false,
-			Subscribers: questionRuntime.Subscribers,
-			Purpose:   "ask the user for missing information before continuing",
-			Source:    "builtin",
-		},
-		{
-			Name:      responseTopic,
-			Type:      firstNonEmpty(responseRuntime.Type, "*msgs.ExecuteResponse"),
-			Publishable: false,
-			Waitable:  true,
-			Subscribers: responseRuntime.Subscribers,
-			Purpose:   "receive the user's answer to the most recent question",
-			Source:    "builtin",
-		},
-		{
-			Name:      resultTopic,
-			Type:      firstNonEmpty(resultRuntime.Type, "*msgs.ExecuteResult"),
-			Publishable: false,
-			Waitable:  false,
-			Subscribers: resultRuntime.Subscribers,
-			Purpose:   "publish the final task result when execution completes",
-			Source:    "builtin",
-		},
-	}
-}
-
 func mergePromptTopic(current, incoming promptTopic) promptTopic {
 	merged := current
 	if merged.Type == "" || merged.Type == "unknown" {
@@ -230,10 +189,22 @@ func mergePromptTopic(current, incoming promptTopic) promptTopic {
 	if incoming.Subscribers > merged.Subscribers {
 		merged.Subscribers = incoming.Subscribers
 	}
+	if merged.OwnerNode == "" {
+		merged.OwnerNode = incoming.OwnerNode
+	}
 	if merged.Purpose == "" {
 		merged.Purpose = incoming.Purpose
 	}
-	if merged.Source == "" || (merged.Source == "runtime" && incoming.Source == "builtin") {
+	if merged.RequestTopic == "" {
+		merged.RequestTopic = incoming.RequestTopic
+	}
+	if merged.ResponseTopic == "" {
+		merged.ResponseTopic = incoming.ResponseTopic
+	}
+	if merged.ResponseType == "" {
+		merged.ResponseType = incoming.ResponseType
+	}
+	if merged.Source == "" {
 		merged.Source = incoming.Source
 	}
 	return merged
@@ -262,9 +233,29 @@ func formatAvailableTopics(topics []promptTopic) string {
 		builder.WriteString(" | subscribers: ")
 		builder.WriteString(strconv.Itoa(availableTopic.Subscribers))
 
+		if availableTopic.OwnerNode != "" {
+			builder.WriteString(" | owner: ")
+			builder.WriteString(availableTopic.OwnerNode)
+		}
+
 		if availableTopic.Purpose != "" {
 			builder.WriteString(" | purpose: ")
 			builder.WriteString(availableTopic.Purpose)
+		}
+
+		if availableTopic.RequestTopic != "" {
+			builder.WriteString(" | request_topic: ")
+			builder.WriteString(availableTopic.RequestTopic)
+		}
+
+		if availableTopic.ResponseTopic != "" {
+			builder.WriteString(" | response_topic: ")
+			builder.WriteString(availableTopic.ResponseTopic)
+		}
+
+		if availableTopic.ResponseType != "" {
+			builder.WriteString(" | response_type: ")
+			builder.WriteString(availableTopic.ResponseType)
 		}
 
 		if availableTopic.Source != "" {
@@ -281,34 +272,20 @@ func formatAvailableTopics(topics []promptTopic) string {
 func topicUsageRules(topics []promptTopic) string {
 	var builder strings.Builder
 	builder.WriteString("- Treat topics as shared coordination channels. Only publish to topics whose publishable flag is true in the current topic list.\n")
-	builder.WriteString("- Use the ask action only when /llm.execute.question is publishable=true. Internally this is a topic request on /llm.execute.question that waits on /llm.execute.response.\n")
+	builder.WriteString("- Topic purpose and request-response routing come from the node that owns the topic. Prefer those advertised semantics over guessing from topic names.\n")
+	builder.WriteString("- Use the ask action only when /llm.execute.question is publishable=true and the topic advertises a response_topic.\n")
 	builder.WriteString("- Use topic_publish to send structured payloads to any currently publishable topic.\n")
-	builder.WriteString("- Use topic_request when you need a request-response flow: publish to request_topic, then wait on response_topic, optionally correlating with match_field and match_value.\n")
+	builder.WriteString("- Use topic_request when you need a request-response flow: publish to request_topic, then wait on response_topic. If response_topic is omitted, use the response_topic advertised by the request topic.\n")
 	builder.WriteString("- A response topic may be waitable even when publishable=false. That means the executor can subscribe and wait on it, but should not publish to it.\n")
 	builder.WriteString("- Do not try to publish to /llm.execute.response yourself. That topic is for answers coming back into the executor.\n")
 	builder.WriteString("- Do not manually publish to /llm.execute.result during reasoning. The executor publishes the final result automatically when you return the complete or error action.\n")
 	builder.WriteString("- If a topic type is unknown, inspect it conservatively before relying on it.\n")
 
 	if len(topics) > 0 {
-		builder.WriteString("- The topic list below is deduplicated by topic name. source=builtin entries describe executor protocol topics; source=runtime entries come from the live system.\n")
+		builder.WriteString("- The topic list below is deduplicated by topic name and enriched with owner-provided metadata when available.\n")
 	}
 
 	return strings.TrimSpace(builder.String())
-}
-
-func describeTopic(topicName string) string {
-	switch topicName {
-	case taskTopic:
-		return "incoming task requests for this executor"
-	case questionTopic:
-		return "ask the user for missing information before continuing"
-	case responseTopic:
-		return "receive the user's answer to the most recent question"
-	case resultTopic:
-		return "publish the final task result when execution completes"
-	default:
-		return ""
-	}
 }
 
 // Run executes the agentic loop for the given task.
@@ -543,12 +520,30 @@ func (a *Agent) requestTopic(action *AgentAction) (string, error) {
 		return "", fmt.Errorf("request topic %s is not currently publishable", action.RequestTopic)
 	}
 
-	responseEntry, ok := a.lookupTopic(action.ResponseTopic)
-	if !ok || !responseEntry.Waitable {
-		return "", fmt.Errorf("response topic %s is not available as a waitable topic", action.ResponseTopic)
+	responseTopicName := action.ResponseTopic
+	responseTopicType := ""
+	if responseTopicName == "" {
+		responseTopicName = requestEntry.ResponseTopic
+		responseTopicType = requestEntry.ResponseType
 	}
-	if responseEntry.Type == "" || responseEntry.Type == "unknown" {
-		return "", fmt.Errorf("response topic %s has unknown type", action.ResponseTopic)
+	if responseTopicName == "" {
+		return "", fmt.Errorf("request topic %s does not advertise a response topic and response_topic was not provided", action.RequestTopic)
+	}
+
+	responseEntry, ok := a.lookupTopic(responseTopicName)
+	if !ok || !responseEntry.Waitable {
+		if responseTopicType == "" {
+			return "", fmt.Errorf("response topic %s is not available as a waitable topic", responseTopicName)
+		}
+	}
+	if responseTopicType == "" {
+		responseTopicType = responseEntry.ResponseType
+	}
+	if responseTopicType == "" {
+		responseTopicType = responseEntry.Type
+	}
+	if responseTopicType == "" || responseTopicType == "unknown" {
+		return "", fmt.Errorf("response topic %s has unknown type", responseTopicName)
 	}
 
 	payload, err := decodeActionPayload(action.Payload)
@@ -561,12 +556,12 @@ func (a *Agent) requestTopic(action *AgentAction) (string, error) {
 		timeout = time.Duration(action.TimeoutSeconds) * time.Second
 	}
 
-	responsePayload, err := a.publishAndWait(action.RequestTopic, payload, action.ResponseTopic, responseEntry.Type, action.MatchField, action.MatchValue, timeout)
+	responsePayload, err := a.publishAndWait(action.RequestTopic, payload, responseTopicName, responseTopicType, action.MatchField, action.MatchValue, timeout)
 	if err != nil {
 		return "", err
 	}
 
-	return fmt.Sprintf("Received response from %s: %s", action.ResponseTopic, formatPayloadForPrompt(responsePayload)), nil
+	return fmt.Sprintf("Received response from %s: %s", responseTopicName, formatPayloadForPrompt(responsePayload)), nil
 }
 
 // askUser publishes a question on /llm.execute.question and waits for
@@ -575,6 +570,9 @@ func (a *Agent) askUser(taskID, question string) (string, error) {
 	questionEntry, ok := a.lookupTopic(questionTopic)
 	if !ok || !questionEntry.Publishable {
 		return "", fmt.Errorf("%s is not currently publishable; ask action is unavailable", questionTopic)
+	}
+	if questionEntry.ResponseTopic == "" {
+		return "", fmt.Errorf("%s does not advertise a response_topic; ask action is unavailable", questionTopic)
 	}
 
 	questionID := newQuestionID(taskID)
@@ -586,12 +584,12 @@ func (a *Agent) askUser(taskID, question string) (string, error) {
 	defer rxConn.Close()
 
 	responseMsg := &msgs.ExecuteResponse{}
-	topicType := fmt.Sprintf("%T", responseMsg)
+	topicType := firstNonEmpty(questionEntry.ResponseType, fmt.Sprintf("%T", responseMsg))
 
 	// Subscribe to the response topic
 	env := msgs.Envelope{
 		Cmd:       msgs.CmdSubscribe,
-		Topic:     responseTopic,
+		Topic:     questionEntry.ResponseTopic,
 		TopicType: topicType,
 	}
 	data, err := msgpack.Marshal(env)

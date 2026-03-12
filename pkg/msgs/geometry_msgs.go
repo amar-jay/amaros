@@ -34,8 +34,3 @@ type Transform struct {
 	Translation Vector3    `json:"translation" msgpack:"translation"`
 	Rotation    Quaternion `json:"rotation" msgpack:"rotation"`
 }
-
-type DemoMsg struct {
-	ROS_MSG
-	Message string `json:"message" msgpack:"message"`
-}

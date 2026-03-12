@@ -22,7 +22,7 @@ func main() {
 	// 	Prompt: "What is the capital of France?",
 	// }
 	msg := msgs.ExecuteTask{
-		Description: "can you play a sinatra song?",
+		Description: "do you have a music topic? if not, what topics do you have access to.",
 	}
 	//msg := "Hello World"
 	node.Publish("/llm.execute.task", msg)

@@ -27,6 +27,20 @@ var (
 func init() {
 
 	llmNode = node.Init("llm_question_answer")
+	llmNode.DescribeTopics([]msgs.TopicMetadata{
+		{
+			Topic:         requestTopic,
+			Type:          "*msgs.ExecuteQuestion",
+			Purpose:       "questions that require a human answer through the llm_question_answer node",
+			ResponseTopic: responseTopic,
+			ResponseType:  "*msgs.ExecuteResponse",
+		},
+		{
+			Topic:   responseTopic,
+			Type:    "*msgs.ExecuteResponse",
+			Purpose: "answers returned by the llm_question_answer node to previously asked questions",
+		},
+	})
 	llmNode.OnShutdown(func() {
 		fmt.Println("shutting down llm_question_answer node")
 	})
@@ -44,7 +58,7 @@ func onRequest(ctx topic.CallbackContext) {
 	ctx.Logger.WithFields(map[string]interface{}{
 		"task_id":     req.TaskID,
 		"question_id": req.QuestionID,
-		"question": req.Question,
+		"question":    req.Question,
 	}).Info("Received question")
 	fmt.Printf("Question: %s\n", req.Question)
 

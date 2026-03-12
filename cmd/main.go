@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -354,8 +355,7 @@ func main() {
 							&cli.StringFlag{
 								Name:    "message",
 								Aliases: []string{"msg"},
-								// Value:   string(demoMsgBytes),
-								Usage: "Message to send",
+								Usage:   "Message to send",
 							},
 							&cli.BoolFlag{
 								Name:    "once",
@@ -375,8 +375,8 @@ func main() {
 							conn := topic.DialServer(cCtx.String("tx_address"))
 							var msg interface{}
 							if message == "" {
-								demoMsg := new(msgs.DemoMsg)
-								demoMsg.Message = "Hello AMAROS!"
+								demoMsg := new(msgs.String)
+								demoMsg.Str = "Hello AMAROS!"
 								msg = interface{}(demoMsg)
 							} else {
 								println("MESSAGE IS :" + message)
@@ -407,15 +407,33 @@ func main() {
 							if cCtx.NArg() == 0 {
 								log.Fatal("Topic name is required")
 							}
+
+							topicName := cCtx.Args().Get(0)
+							metaConn := topic.DialServer(cCtx.String("rx_address"))
+							topics, err := topic.FetchList(metaConn)
+							if err == nil {
+								if listedTopic, ok := findTopicByName(topics, topicName); ok {
+									fmt.Printf("Subscribing to %s\n", listedTopic.Name)
+									fmt.Printf("  type: %s\n", defaultString(listedTopic.Type, "unknown"))
+									if listedTopic.OwnerNode != "" {
+										fmt.Printf("  owner: %s\n", listedTopic.OwnerNode)
+									}
+									if listedTopic.Purpose != "" {
+										fmt.Printf("  description: %s\n", listedTopic.Purpose)
+									}
+									fmt.Println()
+								}
+							}
+
 							conn := topic.DialServer(cCtx.String("rx_address"))
-							msg := msgs.DemoMsg{}
-							_topic := cCtx.Args().Get(0)
+							msg := msgs.String{}
+							_topic := topicName
 							callback := func(ctx topic.CallbackContext) {
 								// a simple callback that just prints the message content and type
 								ctx.Logger.WithFields(map[string]interface{}{
 									"topic": _topic,
 									"type":  reflect.TypeOf(msg),
-								}).Debug(msg.Message)
+								}).Debug(msg.Str)
 							}
 
 							topic.Subscribe(conn, _topic, &msg, callback)
@@ -432,7 +450,17 @@ func main() {
 								log.Fatal("Topic name is required")
 							}
 							conn := topic.DialServer(cCtx.String("rx_address"))
-							topic.SubscribeStatus(conn, cCtx.Args().Get(0))
+							topics, err := topic.FetchList(conn)
+							if err != nil {
+								return err
+							}
+
+							listedTopic, ok := findTopicByName(topics, cCtx.Args().Get(0))
+							if !ok {
+								return fmt.Errorf("topic %s not found", cCtx.Args().Get(0))
+							}
+
+							printVerboseTopic(listedTopic)
 							return nil
 						},
 					},
@@ -442,7 +470,32 @@ func main() {
 						Usage:    "get list of all topics",
 						Action: func(cCtx *cli.Context) error {
 							conn := topic.DialServer(cCtx.String("rx_address"))
-							topic.List(conn)
+							topics, err := topic.FetchList(conn)
+							if err != nil {
+								return err
+							}
+
+							sort.Slice(topics, func(i, j int) bool {
+								return topics[i].Name < topics[j].Name
+							})
+
+							if len(topics) == 0 {
+								fmt.Println("No topics found.")
+								return nil
+							}
+
+							for _, listedTopic := range topics {
+								fmt.Printf("%-28s type=%-24s subs=%-3d", listedTopic.Name, defaultString(listedTopic.Type, "unknown"), listedTopic.Subscribers)
+								if listedTopic.OwnerNode != "" {
+									fmt.Printf(" owner=%s", listedTopic.OwnerNode)
+								}
+								if listedTopic.ResponseTopic != "" {
+									fmt.Printf(" response=%s", listedTopic.ResponseTopic)
+								}
+								fmt.Println()
+							}
+
+							fmt.Printf("%d topic(s) found.\n", len(topics))
 							return nil
 						},
 					},
@@ -454,5 +507,42 @@ func main() {
 	if err := app.Run(os.Args); err != nil {
 		log.Fatal(err)
 
+	}
+}
+
+func defaultString(value string, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func findTopicByName(topics []topic.Topic, name string) (topic.Topic, bool) {
+	for _, listedTopic := range topics {
+		if listedTopic.Name == name {
+			return listedTopic, true
+		}
+	}
+	return topic.Topic{}, false
+}
+
+func printVerboseTopic(listedTopic topic.Topic) {
+	fmt.Printf("%s\n", listedTopic.Name)
+	fmt.Printf("  type: %s\n", defaultString(listedTopic.Type, "unknown"))
+	fmt.Printf("  subscribers: %d\n", listedTopic.Subscribers)
+	if listedTopic.OwnerNode != "" {
+		fmt.Printf("  owner: %s\n", listedTopic.OwnerNode)
+	}
+	if listedTopic.Purpose != "" {
+		fmt.Printf("  purpose: %s\n", listedTopic.Purpose)
+	}
+	if listedTopic.RequestTopic != "" {
+		fmt.Printf("  request_topic: %s\n", listedTopic.RequestTopic)
+	}
+	if listedTopic.ResponseTopic != "" {
+		fmt.Printf("  response_topic: %s\n", listedTopic.ResponseTopic)
+	}
+	if listedTopic.ResponseType != "" {
+		fmt.Printf("  response_type: %s\n", listedTopic.ResponseType)
 	}
 }

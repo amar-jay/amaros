@@ -51,6 +51,19 @@ func (p *Node) Publish(_topic string, msg interface{}) {
 	topic.Publish(p.txConn, _topic, msg)
 }
 
+func (n *Node) DescribeTopic(meta msgs.TopicMetadata) {
+	if meta.OwnerNode == "" {
+		meta.OwnerNode = n.Name
+	}
+	topic.Publish(n.txConn, topic.MetadataTopicName, meta)
+}
+
+func (n *Node) DescribeTopics(metadata []msgs.TopicMetadata) {
+	for _, meta := range metadata {
+		n.DescribeTopic(meta)
+	}
+}
+
 func (s *Node) Subscribe(_topic string, msg msgs.ROS_MSG) {
 	topic.Subscribe(s.rxConn, _topic, msg, s.callback)
 }

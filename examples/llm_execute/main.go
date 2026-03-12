@@ -45,6 +45,18 @@ func init() {
 	provider = openrouter.New(apiKey)
 
 	execNode = node.Init("llm_execute")
+	execNode.DescribeTopics([]msgs.TopicMetadata{
+		{
+			Topic:   taskTopic,
+			Type:    "*msgs.ExecuteTask",
+			Purpose: "incoming task requests for the llm_execute agent",
+		},
+		{
+			Topic:   resultTopic,
+			Type:    "*msgs.ExecuteResult",
+			Purpose: "final task results produced by the llm_execute agent",
+		},
+	})
 	execNode.OnShutdown(func() {
 		fmt.Println("shutting down llm_execute node")
 	})
