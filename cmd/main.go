@@ -41,7 +41,7 @@ func main() {
 					&cli.StringFlag{
 						Name:  "host",
 						Value: "0.0.0.0",
-						Usage: "ROS master host",
+						Usage: "master host",
 					},
 					&cli.BoolFlag{
 						Name:    "debug",
@@ -376,7 +376,7 @@ func main() {
 							var msg interface{}
 							if message == "" {
 								demoMsg := new(msgs.DemoMsg)
-								demoMsg.Message = "Hello Mini ROS!"
+								demoMsg.Message = "Hello AMAROS!"
 								msg = interface{}(demoMsg)
 							} else {
 								println("MESSAGE IS :" + message)

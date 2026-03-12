@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	defaultModel  = "openrouter/free"
+	defaultModel  = "openrouter/hunter-alpha" //openrouter/free"
 	taskTopic     = "/llm.execute.task"
 	questionTopic = "/llm.execute.question"
 	responseTopic = "/llm.execute.response"
@@ -62,7 +62,7 @@ func onTask(ctx topic.CallbackContext) {
 		"description": t.Description,
 	}).Info("received task, starting agentic loop")
 
-	agent := NewAgent(provider, execNode, maxIterations)
+	agent := NewAgent(provider, execNode, ctx.Topics, maxIterations)
 	agent.Run(&t)
 }
 

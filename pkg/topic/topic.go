@@ -15,9 +15,10 @@ import (
 )
 
 type Topic struct {
-	Name    string      `json:"name" msgpack:"name"`
-	Type    string      `json:"type,omitempty" msgpack:"type,omitempty"`
-	Message interface{} `json:"message,omitempty" msgpack:"message,omitempty"`
+	Name        string      `json:"name" msgpack:"name"`
+	Type        string      `json:"type,omitempty" msgpack:"type,omitempty"`
+	Subscribers int         `json:"subscribers,omitempty" msgpack:"subscribers,omitempty"`
+	Message     interface{} `json:"message,omitempty" msgpack:"message,omitempty"`
 }
 
 type Status struct {
@@ -25,7 +26,6 @@ type Status struct {
 	Type        string         `json:"type" msgpack:"type"`
 }
 
-var topics = make([]Topic, 0)
 var logger *ilog.Logger
 
 func init() {
@@ -63,6 +63,7 @@ func handleUnsubscribe(conn net.Conn, topic string) {
 type CallbackContext struct {
 	Logger *ilog.Logger // not well written right, never mind it should be left so.
 	Params string
+	Topics []Topic /* available topics node can access */
 	// add more fields as needed
 }
 
@@ -111,8 +112,14 @@ func handleSubscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback fun
 			println("No logger present")
 		}
 
+		topics, err := FetchList(conn)
+		if err != nil {
+			logger.Error(err)
+			return
+		}
+
 		if env.Topic == topic && callback != nil {
-			callback(CallbackContext{Logger: logger, Params: ""})
+			callback(CallbackContext{Logger: logger, Params: "", Topics: topics})
 		}
 	}
 }
@@ -146,30 +153,26 @@ func handleStatus(conn net.Conn, topic string) {
 	}).Debug("Topic status")
 }
 
-func handleList(conn net.Conn) {
+func handleList(conn net.Conn) ([]Topic, error) {
 	var env msgs.Envelope
+	var topics = make([]Topic, 0)
 	if err := msgpack.UnmarshalRead(conn, &env); err != nil {
-		logger.Error("Server disconnected.", err)
-		return
+		return nil, fmt.Errorf("Server disconnected. %s", err.Error())
 	}
 
 	if env.Cmd == msgs.RespError {
-		logger.Error("Server error:", env.Err)
-		return
+		return nil, fmt.Errorf("Server error: %s", env.Err)
 	}
 
 	if env.Cmd != msgs.RespList {
-		logger.Error("Unexpected response type:", env.Cmd)
-		return
+		return nil, fmt.Errorf("Unexpected response type: %d", env.Cmd)
 	}
 
 	if err := msgpack.Unmarshal(env.Payload, &topics); err != nil {
-		logger.Error("Unmarshal msgpack error:", env.Cmd, err)
-		return
+		logger.Error()
+		return nil, fmt.Errorf("Unmarshal msgpack error: %d %s", env.Cmd, err.Error())
 	}
-	for _, topic := range topics {
-		logger.Debug("Topic: ", topic.Name)
-	}
+	return topics, nil
 }
 
 func Publish(conn net.Conn, topic string, message msgs.ROS_MSG) {
@@ -203,12 +206,22 @@ func Subscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback func(Call
 	handleSubscribe(conn, topic, msg, callback)
 }
 
-func List(conn net.Conn) {
+func FetchList(conn net.Conn) ([]Topic, error) {
 	if err := writeEnvelope(conn, msgs.Envelope{Cmd: msgs.CmdList}); err != nil {
-		logger.Error("Failed to send LIST:", err)
+		return nil, fmt.Errorf("failed to send LIST: %w", err)
+	}
+	return handleList(conn)
+}
+
+func List(conn net.Conn) {
+	topics, err := FetchList(conn)
+	if err != nil {
+		logger.Error(err)
 		return
 	}
-	handleList(conn)
+	for _, topic := range topics {
+		logger.Debug("Topic: ", topic.Name)
+	}
 }
 
 func SubscribeStatus(conn net.Conn, topic string) {

@@ -205,7 +205,11 @@ func (r *Core) Status(topic string, conn net.Conn) {
 func (r *Core) List(conn net.Conn) {
 	topicList := make([]t.Topic, 0, len(r.Subscribers))
 	for topicName := range r.Subscribers {
-		topicList = append(topicList, t.Topic{Name: topicName}) // that is to assume list does not need to know the type
+		topicList = append(topicList, t.Topic{
+			Name:        topicName,
+			Type:        r.Types[topicName],
+			Subscribers: len(r.Subscribers[topicName]),
+		})
 	}
 	payload, err := msgpack.Marshal(topicList)
 	if err != nil {

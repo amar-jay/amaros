@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/amar-jay/amaros/internal/config"
 	ilog "github.com/amar-jay/amaros/internal/logger"
 	"github.com/amar-jay/amaros/internal/model"
 	"github.com/amar-jay/amaros/pkg/msgs"
@@ -24,14 +27,26 @@ You must respond with ONLY a valid JSON object (no markdown fences, no extra tex
 1. Execute a shell command:
 {"action": "execute", "command": "<shell command>"}
 
-2. Ask the user a question (only when you truly need more information):
+2. Ask the user a question (this is shorthand for a topic request over /llm.execute.question -> /llm.execute.response, and only works when /llm.execute.question is currently publishable):
 {"action": "ask", "question": "<your question>"}
 
-3. Report successful task completion:
+3. Publish structured data to an available topic:
+{"action": "topic_publish", "topic": "<topic name>", "payload": {"key": "value"}}
+
+4. Publish to one topic and wait for a correlated reply on another topic:
+{"action": "topic_request", "request_topic": "<topic name>", "payload": {"key": "value"}, "response_topic": "<topic name>", "match_field": "<response field name>", "match_value": "<expected field value>", "timeout_seconds": 120}
+
+5. Report successful task completion:
 {"action": "complete", "summary": "<brief summary of what was done>", "output": "<relevant output or result>"}
 
-4. Report failure:
+6. Report failure:
 {"action": "error", "summary": "<what went wrong>"}
+
+Topic Usage Rules:
+[topic_usage_rules]
+
+Available Topics:
+[topics_list]
 
 Guidelines:
 - Break complex tasks into small, verifiable steps.
@@ -49,6 +64,13 @@ type AgentAction struct {
 	Action   string `json:"action"`
 	Command  string `json:"command,omitempty"`
 	Question string `json:"question,omitempty"`
+	Topic    string `json:"topic,omitempty"`
+	RequestTopic string `json:"request_topic,omitempty"`
+	ResponseTopic string `json:"response_topic,omitempty"`
+	Payload  json.RawMessage `json:"payload,omitempty"`
+	MatchField string `json:"match_field,omitempty"`
+	MatchValue string `json:"match_value,omitempty"`
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 	Summary  string `json:"summary,omitempty"`
 	Output   string `json:"output,omitempty"`
 }
@@ -59,31 +81,252 @@ type Agent struct {
 	node          *node.Node
 	maxIterations int
 	logger        *ilog.Logger
+	topicCatalog  []promptTopic
 	messages      []model.Message
 }
 
+type promptTopic struct {
+	Name      string
+	Type      string
+	Publishable bool
+	Waitable  bool
+	Subscribers int
+	Purpose   string
+	Source    string
+}
+
 // NewAgent creates a new Agent.
-func NewAgent(p model.Provider, n *node.Node, maxIter int) *Agent {
-	return &Agent{
+func NewAgent(p model.Provider, n *node.Node, t []topic.Topic, maxIter int) *Agent {
+	a := &Agent{
 		provider:      p,
 		node:          n,
 		maxIterations: maxIter,
 		logger:        ilog.New(),
-		messages: []model.Message{
-			{Role: model.RoleSystem, Content: systemPrompt},
+		topicCatalog:  buildPromptTopics(t),
+	}
+	a.setSystemPrompt()
+	return a
+}
+
+func buildPromptTopics(observedTopics []topic.Topic) []promptTopic {
+	runtimeTopics := make(map[string]topic.Topic, len(observedTopics))
+
+	for _, observedTopic := range observedTopics {
+		if observedTopic.Name == "" {
+			continue
+		}
+		existing := runtimeTopics[observedTopic.Name]
+		if existing.Type == "" {
+			existing.Type = observedTopic.Type
+		}
+		if observedTopic.Type != "" {
+			existing.Type = observedTopic.Type
+		}
+		if observedTopic.Subscribers > existing.Subscribers {
+			existing.Subscribers = observedTopic.Subscribers
+		}
+		existing.Name = observedTopic.Name
+		runtimeTopics[observedTopic.Name] = existing
+	}
+
+	merged := make(map[string]promptTopic, len(runtimeTopics)+4)
+	for _, builtIn := range builtInPromptTopics(runtimeTopics) {
+		merged[builtIn.Name] = builtIn
+	}
+
+	for _, observedTopic := range runtimeTopics {
+		entry := promptTopic{
+			Name:        observedTopic.Name,
+			Type:        observedTopic.Type,
+			Publishable: observedTopic.Subscribers > 0,
+			Waitable:    true,
+			Subscribers: observedTopic.Subscribers,
+			Purpose:     describeTopic(observedTopic.Name),
+			Source:      "runtime",
+		}
+
+		if existing, ok := merged[observedTopic.Name]; ok {
+			merged[observedTopic.Name] = mergePromptTopic(existing, entry)
+			continue
+		}
+
+		merged[observedTopic.Name] = entry
+	}
+
+	result := make([]promptTopic, 0, len(merged))
+	for _, entry := range merged {
+		if entry.Type == "" {
+			entry.Type = "unknown"
+		}
+		if entry.Source == "" {
+			entry.Source = "runtime"
+		}
+		result = append(result, entry)
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Name == result[j].Name {
+			return result[i].Source < result[j].Source
+		}
+		return result[i].Name < result[j].Name
+	})
+
+	return result
+}
+
+func builtInPromptTopics(runtimeTopics map[string]topic.Topic) []promptTopic {
+	questionRuntime := runtimeTopics[questionTopic]
+	responseRuntime := runtimeTopics[responseTopic]
+	taskRuntime := runtimeTopics[taskTopic]
+	resultRuntime := runtimeTopics[resultTopic]
+
+	return []promptTopic{
+		{
+			Name:      taskTopic,
+			Type:      firstNonEmpty(taskRuntime.Type, "*msgs.ExecuteTask"),
+			Publishable: false,
+			Waitable:  false,
+			Subscribers: taskRuntime.Subscribers,
+			Purpose:   "incoming task requests for this executor",
+			Source:    "builtin",
 		},
+		{
+			Name:      questionTopic,
+			Type:      firstNonEmpty(questionRuntime.Type, "*msgs.ExecuteQuestion"),
+			Publishable: questionRuntime.Subscribers > 0,
+			Waitable:  false,
+			Subscribers: questionRuntime.Subscribers,
+			Purpose:   "ask the user for missing information before continuing",
+			Source:    "builtin",
+		},
+		{
+			Name:      responseTopic,
+			Type:      firstNonEmpty(responseRuntime.Type, "*msgs.ExecuteResponse"),
+			Publishable: false,
+			Waitable:  true,
+			Subscribers: responseRuntime.Subscribers,
+			Purpose:   "receive the user's answer to the most recent question",
+			Source:    "builtin",
+		},
+		{
+			Name:      resultTopic,
+			Type:      firstNonEmpty(resultRuntime.Type, "*msgs.ExecuteResult"),
+			Publishable: false,
+			Waitable:  false,
+			Subscribers: resultRuntime.Subscribers,
+			Purpose:   "publish the final task result when execution completes",
+			Source:    "builtin",
+		},
+	}
+}
+
+func mergePromptTopic(current, incoming promptTopic) promptTopic {
+	merged := current
+	if merged.Type == "" || merged.Type == "unknown" {
+		merged.Type = incoming.Type
+	}
+	merged.Publishable = merged.Publishable || incoming.Publishable
+	merged.Waitable = merged.Waitable || incoming.Waitable
+	if incoming.Subscribers > merged.Subscribers {
+		merged.Subscribers = incoming.Subscribers
+	}
+	if merged.Purpose == "" {
+		merged.Purpose = incoming.Purpose
+	}
+	if merged.Source == "" || (merged.Source == "runtime" && incoming.Source == "builtin") {
+		merged.Source = incoming.Source
+	}
+	return merged
+}
+
+func formatAvailableTopics(topics []promptTopic) string {
+	if len(topics) == 0 {
+		return "- No topics were discoverable at task start. Use /llm.execute.question when you need user input and expect answers on /llm.execute.response."
+	}
+
+	var builder strings.Builder
+	for _, availableTopic := range topics {
+		topicType := availableTopic.Type
+		if topicType == "" {
+			topicType = "unknown"
+		}
+
+		builder.WriteString("- ")
+		builder.WriteString(availableTopic.Name)
+		builder.WriteString(" | type: ")
+		builder.WriteString(topicType)
+		builder.WriteString(" | publishable: ")
+		builder.WriteString(strconv.FormatBool(availableTopic.Publishable))
+		builder.WriteString(" | waitable: ")
+		builder.WriteString(strconv.FormatBool(availableTopic.Waitable))
+		builder.WriteString(" | subscribers: ")
+		builder.WriteString(strconv.Itoa(availableTopic.Subscribers))
+
+		if availableTopic.Purpose != "" {
+			builder.WriteString(" | purpose: ")
+			builder.WriteString(availableTopic.Purpose)
+		}
+
+		if availableTopic.Source != "" {
+			builder.WriteString(" | source: ")
+			builder.WriteString(availableTopic.Source)
+		}
+
+		builder.WriteString("\n")
+	}
+
+	return strings.TrimSpace(builder.String())
+}
+
+func topicUsageRules(topics []promptTopic) string {
+	var builder strings.Builder
+	builder.WriteString("- Treat topics as shared coordination channels. Only publish to topics whose publishable flag is true in the current topic list.\n")
+	builder.WriteString("- Use the ask action only when /llm.execute.question is publishable=true. Internally this is a topic request on /llm.execute.question that waits on /llm.execute.response.\n")
+	builder.WriteString("- Use topic_publish to send structured payloads to any currently publishable topic.\n")
+	builder.WriteString("- Use topic_request when you need a request-response flow: publish to request_topic, then wait on response_topic, optionally correlating with match_field and match_value.\n")
+	builder.WriteString("- A response topic may be waitable even when publishable=false. That means the executor can subscribe and wait on it, but should not publish to it.\n")
+	builder.WriteString("- Do not try to publish to /llm.execute.response yourself. That topic is for answers coming back into the executor.\n")
+	builder.WriteString("- Do not manually publish to /llm.execute.result during reasoning. The executor publishes the final result automatically when you return the complete or error action.\n")
+	builder.WriteString("- If a topic type is unknown, inspect it conservatively before relying on it.\n")
+
+	if len(topics) > 0 {
+		builder.WriteString("- The topic list below is deduplicated by topic name. source=builtin entries describe executor protocol topics; source=runtime entries come from the live system.\n")
+	}
+
+	return strings.TrimSpace(builder.String())
+}
+
+func describeTopic(topicName string) string {
+	switch topicName {
+	case taskTopic:
+		return "incoming task requests for this executor"
+	case questionTopic:
+		return "ask the user for missing information before continuing"
+	case responseTopic:
+		return "receive the user's answer to the most recent question"
+	case resultTopic:
+		return "publish the final task result when execution completes"
+	default:
+		return ""
 	}
 }
 
 // Run executes the agentic loop for the given task.
 func (a *Agent) Run(task *msgs.ExecuteTask) {
 	a.logger.WithFields(map[string]interface{}{
-		"task_id": task.TaskID,
+		"task_id":     task.TaskID,
+		"description": task.Description,
 	}).Info("starting agentic loop")
 
 	a.addMessage(model.RoleUser, fmt.Sprintf("Task: %s", task.Description))
 
 	for i := 0; i < a.maxIterations; i++ {
+		if err := a.refreshTopicCatalog(); err != nil {
+			a.logger.WithFields(map[string]interface{}{
+				"error": err.Error(),
+			}).Warn("failed to refresh runtime topic catalog")
+		}
+
 		a.logger.WithFields(map[string]interface{}{
 			"iteration": i + 1,
 			"task_id":   task.TaskID,
@@ -96,6 +339,7 @@ func (a *Agent) Run(task *msgs.ExecuteTask) {
 				a.addMessage(model.RoleUser, "Your previous response was not valid JSON. Respond with ONLY a JSON object with an 'action' field.")
 				continue
 			}
+
 			// Fatal LLM error
 			a.logger.Error("LLM call failed: ", err)
 			a.publishResult(task.TaskID, false, fmt.Sprintf("LLM error: %v", err), "")
@@ -133,6 +377,22 @@ func (a *Agent) Run(task *msgs.ExecuteTask) {
 			}
 			a.addMessage(model.RoleUser, fmt.Sprintf("User response: %s", response))
 
+		case "topic_publish":
+			result, err := a.publishToTopic(action)
+			if err != nil {
+				a.addMessage(model.RoleUser, fmt.Sprintf("Topic publish error: %v", err))
+				continue
+			}
+			a.addMessage(model.RoleUser, result)
+
+		case "topic_request":
+			result, err := a.requestTopic(action)
+			if err != nil {
+				a.addMessage(model.RoleUser, fmt.Sprintf("Topic request error: %v", err))
+				continue
+			}
+			a.addMessage(model.RoleUser, result)
+
 		case "complete":
 			a.logger.WithFields(map[string]interface{}{
 				"summary": action.Summary,
@@ -158,6 +418,26 @@ func (a *Agent) Run(task *msgs.ExecuteTask) {
 
 func (a *Agent) addMessage(role model.Role, content string) {
 	a.messages = append(a.messages, model.Message{Role: role, Content: content})
+}
+
+func (a *Agent) setSystemPrompt() {
+	content := strings.ReplaceAll(systemPrompt, "[topics_list]", formatAvailableTopics(a.topicCatalog))
+	content = strings.ReplaceAll(content, "[topic_usage_rules]", topicUsageRules(a.topicCatalog))
+	if len(a.messages) == 0 {
+		a.messages = []model.Message{{Role: model.RoleSystem, Content: content}}
+		return
+	}
+	a.messages[0] = model.Message{Role: model.RoleSystem, Content: content}
+}
+
+func (a *Agent) refreshTopicCatalog() error {
+	runtimeTopics, err := fetchRuntimeTopics()
+	if err != nil {
+		return err
+	}
+	a.topicCatalog = buildPromptTopics(runtimeTopics)
+	a.setSystemPrompt()
+	return nil
 }
 
 func (a *Agent) callLLM() (*AgentAction, error) {
@@ -215,13 +495,94 @@ func parseAction(content string) (*AgentAction, error) {
 	return &action, nil
 }
 
+func fetchRuntimeTopics() ([]topic.Topic, error) {
+	conf := config.Get()
+	url := net.JoinHostPort(conf.Core.Host, strconv.Itoa(conf.Core.RxPort))
+	conn, err := net.Dial("tcp", url)
+	if err != nil {
+		return nil, fmt.Errorf("dial topic server: %w", err)
+	}
+	defer conn.Close()
+
+	topics, err := topic.FetchList(conn)
+	if err != nil {
+		return nil, fmt.Errorf("fetch topic list: %w", err)
+	}
+	return topics, nil
+}
+
+func (a *Agent) publishToTopic(action *AgentAction) (string, error) {
+	if action.Topic == "" {
+		return "", fmt.Errorf("missing topic field")
+	}
+
+	entry, ok := a.lookupTopic(action.Topic)
+	if !ok || !entry.Publishable {
+		return "", fmt.Errorf("topic %s is not currently publishable", action.Topic)
+	}
+
+	payload, err := decodeActionPayload(action.Payload)
+	if err != nil {
+		return "", err
+	}
+
+	a.node.Publish(action.Topic, payload)
+	return fmt.Sprintf("Published payload to %s: %s", action.Topic, formatPayloadForPrompt(payload)), nil
+}
+
+func (a *Agent) requestTopic(action *AgentAction) (string, error) {
+	if action.RequestTopic == "" {
+		return "", fmt.Errorf("missing request_topic field")
+	}
+	if action.ResponseTopic == "" {
+		return "", fmt.Errorf("missing response_topic field")
+	}
+
+	requestEntry, ok := a.lookupTopic(action.RequestTopic)
+	if !ok || !requestEntry.Publishable {
+		return "", fmt.Errorf("request topic %s is not currently publishable", action.RequestTopic)
+	}
+
+	responseEntry, ok := a.lookupTopic(action.ResponseTopic)
+	if !ok || !responseEntry.Waitable {
+		return "", fmt.Errorf("response topic %s is not available as a waitable topic", action.ResponseTopic)
+	}
+	if responseEntry.Type == "" || responseEntry.Type == "unknown" {
+		return "", fmt.Errorf("response topic %s has unknown type", action.ResponseTopic)
+	}
+
+	payload, err := decodeActionPayload(action.Payload)
+	if err != nil {
+		return "", err
+	}
+
+	timeout := responseWait
+	if action.TimeoutSeconds > 0 {
+		timeout = time.Duration(action.TimeoutSeconds) * time.Second
+	}
+
+	responsePayload, err := a.publishAndWait(action.RequestTopic, payload, action.ResponseTopic, responseEntry.Type, action.MatchField, action.MatchValue, timeout)
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("Received response from %s: %s", action.ResponseTopic, formatPayloadForPrompt(responsePayload)), nil
+}
+
 // askUser publishes a question on /llm.execute.question and waits for
 // a response on /llm.execute.response via a temporary subscription.
 func (a *Agent) askUser(taskID, question string) (string, error) {
+	questionEntry, ok := a.lookupTopic(questionTopic)
+	if !ok || !questionEntry.Publishable {
+		return "", fmt.Errorf("%s is not currently publishable; ask action is unavailable", questionTopic)
+	}
+
 	questionID := newQuestionID(taskID)
+	conf := config.Get()
 
 	// Dial a separate RX connection for the response subscription
-	rxConn := topic.DialServer("localhost:11312")
+	url := net.JoinHostPort(conf.Core.Host, strconv.Itoa(conf.Core.RxPort))
+	rxConn := topic.DialServer(url)
 	defer rxConn.Close()
 
 	responseMsg := &msgs.ExecuteResponse{}
@@ -286,6 +647,67 @@ func (a *Agent) askUser(taskID, question string) (string, error) {
 	}
 }
 
+func (a *Agent) publishAndWait(requestTopic string, payload interface{}, responseTopicName string, responseTopicType string, matchField string, matchValue string, timeout time.Duration) (interface{}, error) {
+	conf := config.Get()
+	url := net.JoinHostPort(conf.Core.Host, strconv.Itoa(conf.Core.RxPort))
+	rxConn, err := net.Dial("tcp", url)
+	if err != nil {
+		return nil, fmt.Errorf("dial response topic server: %w", err)
+	}
+	defer rxConn.Close()
+
+	env := msgs.Envelope{
+		Cmd:       msgs.CmdSubscribe,
+		Topic:     responseTopicName,
+		TopicType: responseTopicType,
+	}
+	data, err := msgpack.Marshal(env)
+	if err != nil {
+		return nil, fmt.Errorf("marshal subscribe: %w", err)
+	}
+	if _, err := rxConn.Write(data); err != nil {
+		return nil, fmt.Errorf("send subscribe: %w", err)
+	}
+
+	a.node.Publish(requestTopic, payload)
+
+	if err := rxConn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, fmt.Errorf("set read deadline: %w", err)
+	}
+
+	for {
+		var respEnv msgs.Envelope
+		if err := msgpack.UnmarshalRead(rxConn, &respEnv); err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				return nil, fmt.Errorf("timed out waiting for response on %s", responseTopicName)
+			}
+			return nil, fmt.Errorf("read response: %w", err)
+		}
+
+		switch respEnv.Cmd {
+		case msgs.RespOK:
+			continue
+		case msgs.RespError:
+			return nil, fmt.Errorf("server error: %s", respEnv.Err)
+		case msgs.RespMessage:
+		default:
+			continue
+		}
+
+		var responsePayload interface{}
+		if err := msgpack.Unmarshal(respEnv.Payload, &responsePayload); err != nil {
+			return nil, fmt.Errorf("unmarshal response payload: %w", err)
+		}
+
+		if !matchesGenericResponse(responsePayload, matchField, matchValue) {
+			continue
+		}
+
+		return responsePayload, nil
+	}
+}
+
 func matchesResponse(taskID, questionID string, response *msgs.ExecuteResponse) bool {
 	if response == nil {
 		return false
@@ -297,6 +719,24 @@ func matchesResponse(taskID, questionID string, response *msgs.ExecuteResponse) 
 		return response.TaskID == ""
 	}
 	return response.TaskID == taskID
+}
+
+func matchesGenericResponse(responsePayload interface{}, matchField, matchValue string) bool {
+	if matchField == "" {
+		return true
+	}
+
+	responseMap, ok := responsePayload.(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	actualValue, ok := responseMap[matchField]
+	if !ok {
+		return false
+	}
+
+	return fmt.Sprint(actualValue) == matchValue
 }
 
 func newQuestionID(taskID string) string {
@@ -313,6 +753,44 @@ func (a *Agent) publishResult(taskID string, success bool, summary, output strin
 		Summary: summary,
 		Output:  output,
 	})
+}
+
+func (a *Agent) lookupTopic(topicName string) (promptTopic, bool) {
+	for _, availableTopic := range a.topicCatalog {
+		if availableTopic.Name == topicName {
+			return availableTopic, true
+		}
+	}
+	return promptTopic{}, false
+}
+
+func decodeActionPayload(raw json.RawMessage) (interface{}, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("missing payload field")
+	}
+
+	var payload interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, fmt.Errorf("invalid payload JSON: %w", err)
+	}
+	return payload, nil
+}
+
+func formatPayloadForPrompt(payload interface{}) string {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Sprintf("%v", payload)
+	}
+	return string(data)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func formatCommandResult(stdout, stderr string, exitCode int) string {
