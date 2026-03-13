@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"github.com/matoous/go-nanoid/v2"
 
 	"github.com/amar-jay/amaros/internal/config"
 	"github.com/amar-jay/amaros/internal/model"
@@ -14,7 +15,7 @@ import (
 )
 
 const (
-	defaultModel  = "openrouter/hunter-alpha" //openrouter/free"
+	defaultModel  = "openrouter/hunter-alpha"
 	taskTopic     = "/llm.execute.task"
 	questionTopic = "/llm.execute.question"
 	responseTopic = "/llm.execute.response"
@@ -45,18 +46,6 @@ func init() {
 	provider = openrouter.New(apiKey)
 
 	execNode = node.Init("llm_execute")
-	execNode.DescribeTopics([]msgs.TopicMetadata{
-		{
-			Topic:   taskTopic,
-			Type:    "*msgs.ExecuteTask",
-			Purpose: "incoming task requests for the llm_execute agent",
-		},
-		{
-			Topic:   resultTopic,
-			Type:    "*msgs.ExecuteResult",
-			Purpose: "final task results produced by the llm_execute agent",
-		},
-	})
 	execNode.OnShutdown(func() {
 		fmt.Println("shutting down llm_execute node")
 	})
@@ -69,13 +58,26 @@ func onTask(ctx topic.CallbackContext) {
 		return
 	}
 
+	if t.TaskID == "" {
+		id, err := gonanoid.New()
+		if err != nil {
+			ctx.Logger.WithFields(map[string]interface{}{
+				"error": err.Error(),
+			}).Warn("failed to generate task id")
+			return
+		}
+		t.TaskID = id
+	}
+
 	ctx.Logger.WithFields(map[string]interface{}{
 		"task_id":     t.TaskID,
 		"description": t.Description,
 	}).Info("received task, starting agentic loop")
 
-	agent := NewAgent(provider, execNode, ctx.Topics, maxIterations)
-	agent.Run(&t)
+	go func(taskCopy msgs.ExecuteTask, topics []topic.Topic) {
+		agent := NewAgent(provider, execNode, topics, maxIterations)
+		agent.Run(&taskCopy)
+	}(t, append([]topic.Topic(nil), ctx.Topics...))
 }
 
 // llm_execute is an agentic node that receives task descriptions on

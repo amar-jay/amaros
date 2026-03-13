@@ -3,6 +3,7 @@ module github.com/amar-jay/amaros
 go 1.23.0
 
 require (
+	github.com/matoous/go-nanoid/v2 v2.1.0
 	github.com/shamaton/msgpack/v2 v2.4.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/viper v1.21.0

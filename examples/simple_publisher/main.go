@@ -1,28 +1,31 @@
 package main
 
 import (
+	"flag"
+
 	"github.com/amar-jay/amaros/pkg/msgs"
 	"github.com/amar-jay/amaros/pkg/node"
 )
 
 func main() {
+	// Take question from cli
+	question := flag.String("question", "", "Question to publish")
+	flag.Parse()
+	if *question == "" {
+		panic("Question Description is required")
+	}
+
 	node := node.Init("simple_node")
 	node.OnShutdown(func() {
 		println("shutting down node")
 	})
 
-	// msg := msgs.Quaternion{
-	// 	X: 0.1,
-	// 	Y: 0.2,
-	// 	Z: 0.3,
-	// 	W: 0.4,
-	// }
 	// msg := msgs.LLMRequest{
 	// 	Model:  "openrouter/free",
 	// 	Prompt: "What is the capital of France?",
 	// }
 	msg := msgs.ExecuteTask{
-		Description: "do you have a music topic? if not, what topics do you have access to.",
+		Description: *question,
 	}
 	//msg := "Hello World"
 	node.Publish("/llm.execute.task", msg)

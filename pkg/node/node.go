@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/amar-jay/amaros/pkg/msgs"
@@ -16,6 +17,7 @@ type Node struct {
 	callback   func(topic.CallbackContext) // to listen for messages
 	txConn     net.Conn                    // connection for publishing (TX)
 	rxConn     net.Conn                    // connection for subscribing (RX)
+	txMu       sync.Mutex
 }
 
 func Init(name string) *Node {
@@ -48,6 +50,8 @@ func (n *Node) Callback(f func(topic.CallbackContext)) {
 	n.callback = f
 }
 func (p *Node) Publish(_topic string, msg interface{}) {
+	p.txMu.Lock()
+	defer p.txMu.Unlock()
 	topic.Publish(p.txConn, _topic, msg)
 }
 
@@ -55,6 +59,8 @@ func (n *Node) DescribeTopic(meta msgs.TopicMetadata) {
 	if meta.OwnerNode == "" {
 		meta.OwnerNode = n.Name
 	}
+	n.txMu.Lock()
+	defer n.txMu.Unlock()
 	topic.Publish(n.txConn, topic.MetadataTopicName, meta)
 }
 

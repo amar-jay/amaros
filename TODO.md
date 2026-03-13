@@ -1,6 +1,7 @@
 - [ ] Cron jobs node 
-- [ ] memory hierarchy
+- [ ] memory hierarchy (including vector search)
 - [ ] messaging api (preferably telegram) 
 	- [ ] Also implement configuration for external API in hashmaps  
 - [ ] Image input to model
 - [ ] internet search node
+- [ ] Creator node - A node that can create a node

@@ -31,10 +31,12 @@ func main() {
 		if t.Success {
 			ctx.Logger.WithFields(map[string]interface{}{
 				"summary": t.Summary,
+				"task_id": t.TaskID,
 			}).Info(t.Output)
 		} else {
 			ctx.Logger.WithFields(map[string]interface{}{
 				"summary": t.Summary,
+				"task_id": t.TaskID,
 			}).Error("Received error")
 			fmt.Printf("Error : %s\n", t.Output)
 		}

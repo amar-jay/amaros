@@ -61,18 +61,18 @@ Guidelines:
 
 // AgentAction represents a parsed action from the LLM response.
 type AgentAction struct {
-	Action   string `json:"action"`
-	Command  string `json:"command,omitempty"`
-	Question string `json:"question,omitempty"`
-	Topic    string `json:"topic,omitempty"`
-	RequestTopic string `json:"request_topic,omitempty"`
-	ResponseTopic string `json:"response_topic,omitempty"`
-	Payload  json.RawMessage `json:"payload,omitempty"`
-	MatchField string `json:"match_field,omitempty"`
-	MatchValue string `json:"match_value,omitempty"`
-	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
-	Summary  string `json:"summary,omitempty"`
-	Output   string `json:"output,omitempty"`
+	Action         string          `json:"action"`
+	Command        string          `json:"command,omitempty"`
+	Question       string          `json:"question,omitempty"`
+	Topic          string          `json:"topic,omitempty"`
+	RequestTopic   string          `json:"request_topic,omitempty"`
+	ResponseTopic  string          `json:"response_topic,omitempty"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	MatchField     string          `json:"match_field,omitempty"`
+	MatchValue     string          `json:"match_value,omitempty"`
+	TimeoutSeconds int             `json:"timeout_seconds,omitempty"`
+	Summary        string          `json:"summary,omitempty"`
+	Output         string          `json:"output,omitempty"`
 }
 
 // Agent runs the agentic loop for task execution.
@@ -86,17 +86,17 @@ type Agent struct {
 }
 
 type promptTopic struct {
-	Name      string
-	Type      string
-	Publishable bool
-	Waitable  bool
-	Subscribers int
-	OwnerNode string
-	Purpose   string
-	RequestTopic string
+	Name          string
+	Type          string
+	Publishable   bool
+	Waitable      bool
+	Subscribers   int
+	OwnerNode     string
+	Purpose       string
+	RequestTopic  string
 	ResponseTopic string
-	ResponseType string
-	Source    string
+	ResponseType  string
+	Source        string
 }
 
 // NewAgent creates a new Agent.
@@ -120,6 +120,22 @@ func buildPromptTopics(observedTopics []topic.Topic) []promptTopic {
 			continue
 		}
 		existing := runtimeTopics[observedTopic.Name]
+		if existing.OwnerNode == "" {
+			existing.OwnerNode = observedTopic.OwnerNode
+		}
+		if existing.Purpose == "" {
+			existing.Purpose = observedTopic.Purpose
+		}
+		if existing.RequestTopic == "" {
+			existing.RequestTopic = observedTopic.RequestTopic
+		}
+		if existing.ResponseTopic == "" {
+			existing.ResponseTopic = observedTopic.ResponseTopic
+		}
+		if existing.ResponseType == "" {
+			existing.ResponseType = observedTopic.ResponseType
+		}
+
 		if existing.Type == "" {
 			existing.Type = observedTopic.Type
 		}
@@ -137,17 +153,17 @@ func buildPromptTopics(observedTopics []topic.Topic) []promptTopic {
 
 	for _, observedTopic := range runtimeTopics {
 		entry := promptTopic{
-			Name:        observedTopic.Name,
-			Type:        observedTopic.Type,
-			Publishable: observedTopic.Subscribers > 0,
-			Waitable:    true,
-			Subscribers: observedTopic.Subscribers,
-			OwnerNode:   observedTopic.OwnerNode,
-			Purpose:     observedTopic.Purpose,
-			RequestTopic: observedTopic.RequestTopic,
+			Name:          observedTopic.Name,
+			Type:          observedTopic.Type,
+			Publishable:   observedTopic.Subscribers > 0,
+			Waitable:      true,
+			Subscribers:   observedTopic.Subscribers,
+			OwnerNode:     observedTopic.OwnerNode,
+			Purpose:       observedTopic.Purpose,
+			RequestTopic:  observedTopic.RequestTopic,
 			ResponseTopic: observedTopic.ResponseTopic,
-			ResponseType: observedTopic.ResponseType,
-			Source:      "runtime",
+			ResponseType:  observedTopic.ResponseType,
+			Source:        "runtime",
 		}
 
 		if existing, ok := merged[observedTopic.Name]; ok {
@@ -304,11 +320,7 @@ func (a *Agent) Run(task *msgs.ExecuteTask) {
 			}).Warn("failed to refresh runtime topic catalog")
 		}
 
-		a.logger.WithFields(map[string]interface{}{
-			"iteration": i + 1,
-			"task_id":   task.TaskID,
-		}).Info("agent iteration")
-
+		start := time.Now()
 		action, err := a.callLLM()
 		if err != nil {
 			// If parse error, ask the LLM to correct itself and continue
@@ -322,6 +334,13 @@ func (a *Agent) Run(task *msgs.ExecuteTask) {
 			a.publishResult(task.TaskID, false, fmt.Sprintf("LLM error: %v", err), "")
 			return
 		}
+		elapsed := time.Since(start)
+
+		a.logger.WithFields(map[string]interface{}{
+			"iteration":         i + 1,
+			"task_id":           task.TaskID,
+			"llm_response_time": fmt.Sprintf("%.0f s", elapsed.Seconds()),
+		}).Info("agent iteration")
 
 		switch action.Action {
 		case "execute":
@@ -421,11 +440,13 @@ func (a *Agent) callLLM() (*AgentAction, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), llmTimeout)
 	defer cancel()
 
+	// measure timing
 	resp, err := a.provider.Complete(ctx, model.CompletionRequest{
 		Model:       defaultModel,
 		Messages:    a.messages,
 		Temperature: 0.2,
 	})
+
 	if err != nil {
 		return nil, fmt.Errorf("LLM request failed: %w", err)
 	}
@@ -754,6 +775,7 @@ func (a *Agent) publishResult(taskID string, success bool, summary, output strin
 }
 
 func (a *Agent) lookupTopic(topicName string) (promptTopic, bool) {
+	fmt.Printf("%v", a.topicCatalog)
 	for _, availableTopic := range a.topicCatalog {
 		if availableTopic.Name == topicName {
 			return availableTopic, true
