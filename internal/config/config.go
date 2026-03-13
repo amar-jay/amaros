@@ -70,6 +70,12 @@ func init() {
 		}
 	}
 
+	if _, err := os.Stat(filepath.Join(configDir, "SOUL.md")); os.IsNotExist(err) {
+		if err := os.WriteFile(filepath.Join(configDir, "SOUL.md"), []byte(defaultSystemPrompt), 0644); err != nil {
+			panic("failed to write default config: " + err.Error())
+		}
+	}
+
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(configDir)

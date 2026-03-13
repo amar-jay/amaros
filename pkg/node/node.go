@@ -32,7 +32,6 @@ func Init(name string) *Node {
 	go func() {
 		<-sig
 		if n.onshutdown != nil {
-			println("shutting down node: ", n.Name)
 			n.onshutdown()
 		}
 	}()

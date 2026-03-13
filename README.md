@@ -14,15 +14,6 @@ Nodes can call external APIs, like models, databases, external APIs (weather, st
 Nodes do only one thing, but they do it well.
 This design allows for a highly modular and extensible system, where new capabilities can be added by simply creating new nodes and defining their interactions with existing nodes.
 
-## Libraries (used but not limited to)
-- Go
-- protobuf - for message serialization and comprehensive description of messages and events.
-- viper - for configuration management (~/.config/amaros/)
-- fiber - for human-facing node 
-- sqlite - for state management and memory, registry in sqlite
-- logrus - for logging
-- cobra - for CLI tools
-
 memory heirarchy:
 in-memory -> file(readme)-> sqlite 
 

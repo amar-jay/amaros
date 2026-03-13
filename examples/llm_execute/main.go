@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"log"
 	"time"
-	"github.com/matoous/go-nanoid/v2"
+
+	gonanoid "github.com/matoous/go-nanoid/v2"
 
 	"github.com/amar-jay/amaros/internal/config"
 	"github.com/amar-jay/amaros/internal/model"
@@ -15,7 +16,7 @@ import (
 )
 
 const (
-	defaultModel  = "openrouter/hunter-alpha"
+	defaultModel  = "openrouter/free"
 	taskTopic     = "/llm.execute.task"
 	questionTopic = "/llm.execute.question"
 	responseTopic = "/llm.execute.response"
