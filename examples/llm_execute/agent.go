@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amar-jay/amaros/internal/config"
+	"github.com/amar-jay/amaros/pkg/config"
 	ilog "github.com/amar-jay/amaros/internal/logger"
 	"github.com/amar-jay/amaros/internal/model"
 	"github.com/amar-jay/amaros/pkg/msgs"

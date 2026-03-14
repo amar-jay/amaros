@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/amar-jay/amaros/internal/config"
+	"github.com/amar-jay/amaros/pkg/config"
 	ilog "github.com/amar-jay/amaros/internal/logger"
 )
 

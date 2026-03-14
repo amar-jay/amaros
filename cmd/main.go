@@ -198,7 +198,7 @@ func main() {
 							nodes := []map[string]string{}
 
 							switch {
-							case cCtx.Bool("all"):
+							case cCtx.Bool("remote"):
 
 								local, err := reg.List()
 								if err != nil {
@@ -211,20 +211,6 @@ func main() {
 										"version": n.Version + " (installed)",
 									})
 								}
-
-								remote, err := reg.ListRemote()
-								if err != nil {
-									return err
-								}
-
-								for _, r := range remote {
-									nodes = append(nodes, map[string]string{
-										"name":    r.Name,
-										"version": r.Latest,
-									})
-								}
-
-							case cCtx.Bool("remote"):
 
 								remote, err := reg.ListRemote()
 								if err != nil {

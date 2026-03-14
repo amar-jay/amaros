@@ -7,19 +7,19 @@ import (
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
 
-	"github.com/amar-jay/amaros/internal/config"
 	"github.com/amar-jay/amaros/internal/model"
 	"github.com/amar-jay/amaros/internal/openrouter"
+	"github.com/amar-jay/amaros/pkg/config"
 	"github.com/amar-jay/amaros/pkg/msgs"
 	"github.com/amar-jay/amaros/pkg/node"
 	"github.com/amar-jay/amaros/pkg/topic"
 )
 
 const (
-	defaultModel  = "openrouter/free"
+	defaultModel  = "openrouter/hunter-alpha"
 	taskTopic     = "/llm.execute.task"
-	questionTopic = "/llm.execute.question"
-	responseTopic = "/llm.execute.response"
+	questionTopic = "/telegram.question"
+	responseTopic = "/telegram.response"
 	resultTopic   = "/llm.execute.result"
 	maxIterations = 50
 	cmdTimeout    = 30 * time.Second

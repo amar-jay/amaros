@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	requestTopic   = "/llm.execute.question"
-	responseTopic  = "/llm.execute.response"
+	requestTopic   = "/console.question"
+	responseTopic  = "/console.response"
 	requestTimeout = 60 * time.Second
 )
 
@@ -26,7 +26,7 @@ var (
 
 func init() {
 
-	llmNode = node.Init("llm_question_answer")
+	llmNode = node.Init("console_messaging")
 	llmNode.DescribeTopics([]msgs.TopicMetadata{
 		{
 			Topic:         requestTopic,

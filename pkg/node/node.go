@@ -72,3 +72,9 @@ func (n *Node) DescribeTopics(metadata []msgs.TopicMetadata) {
 func (s *Node) Subscribe(_topic string, msg msgs.ROS_MSG) {
 	topic.Subscribe(s.rxConn, _topic, msg, s.callback)
 }
+
+// SubscribeWithCallback subscribes to a topic using a specific callback function.
+// This allows a node to handle multiple topic types with different handlers.
+func (s *Node) SubscribeWithCallback(_topic string, msg msgs.ROS_MSG, callback func(topic.CallbackContext)) {
+	topic.Subscribe(s.rxConn, _topic, msg, callback)
+}

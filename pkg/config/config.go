@@ -10,10 +10,11 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	Core       CoreConfig       `mapstructure:"core"`
-	OpenRouter OpenRouterConfig `mapstructure:"openrouter"`
-	Registry   RegistryConfig   `mapstructure:"registry"`
-	Log        LogConfig        `mapstructure:"log"`
+	Core         CoreConfig         `mapstructure:"core"`
+	OpenRouter   OpenRouterConfig   `mapstructure:"openrouter"`
+	Registry     RegistryConfig     `mapstructure:"registry"`
+	Log          LogConfig          `mapstructure:"log"`
+	Integrations IntegrationsConfig `mapstructure:"integrations"`
 }
 
 type CoreConfig struct {
@@ -35,6 +36,8 @@ type LogConfig struct {
 	Level string `mapstructure:"level"`
 }
 
+type IntegrationsConfig map[string]interface{}
+
 var cfg *Config
 
 const defaultConfig = `core:
@@ -51,6 +54,8 @@ registry:
 
 log:
   level: "info"
+
+integrations:
 `
 
 func init() {
