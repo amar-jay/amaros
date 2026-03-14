@@ -47,7 +47,7 @@ func main() {
 					&cli.BoolFlag{
 						Name:    "debug",
 						Value:   false,
-						Aliases: []string{"verbose"},
+						Aliases: []string{"verbose", "v"},
 						Usage:   "Enable debug logging",
 					},
 				},
@@ -267,7 +267,6 @@ func main() {
 							if err != nil {
 								return err
 							}
-
 							fmt.Printf("Name:         %s\n", manifest.Name)
 							fmt.Printf("Description:  %s\n", manifest.Description)
 							fmt.Printf("Author:       %s\n", manifest.Author)
@@ -365,7 +364,7 @@ func main() {
 								demoMsg.Str = "Hello AMAROS!"
 								msg = interface{}(demoMsg)
 							} else {
-								println("MESSAGE IS :" + message)
+								fmt.Println("MESSAGE IS :", message)
 								err := json.Unmarshal([]byte(message), &msg)
 								if err != nil {
 									log.Fatal("Unable to unmarshal message")
@@ -446,7 +445,7 @@ func main() {
 								return fmt.Errorf("topic %s not found", cCtx.Args().Get(0))
 							}
 
-							printVerboseTopic(listedTopic)
+							printTopic(listedTopic, true)
 							return nil
 						},
 					},
@@ -454,6 +453,14 @@ func main() {
 						Name:     "list",
 						Category: "topic",
 						Usage:    "get list of all topics",
+						Flags: []cli.Flag{
+							&cli.BoolFlag{
+								Name:     "verbose",
+								Aliases:  []string{"v"},
+								Usage:    "detailed topics list",
+								Required: false,
+							},
+						},
 						Action: func(cCtx *cli.Context) error {
 							conn := topic.DialServer(cCtx.String("rx_address"))
 							topics, err := topic.FetchList(conn)
@@ -471,14 +478,7 @@ func main() {
 							}
 
 							for _, listedTopic := range topics {
-								fmt.Printf("%-28s type=%-24s subs=%-3d", listedTopic.Name, defaultString(listedTopic.Type, "unknown"), listedTopic.Subscribers)
-								if listedTopic.OwnerNode != "" {
-									fmt.Printf(" owner=%s", listedTopic.OwnerNode)
-								}
-								if listedTopic.ResponseTopic != "" {
-									fmt.Printf(" response=%s", listedTopic.ResponseTopic)
-								}
-								fmt.Println()
+								printTopic(listedTopic, cCtx.Bool("verbose"))
 							}
 
 							fmt.Printf("%d topic(s) found.\n", len(topics))
@@ -512,23 +512,35 @@ func findTopicByName(topics []topic.Topic, name string) (topic.Topic, bool) {
 	return topic.Topic{}, false
 }
 
-func printVerboseTopic(listedTopic topic.Topic) {
-	fmt.Printf("%s\n", listedTopic.Name)
-	fmt.Printf("  type: %s\n", defaultString(listedTopic.Type, "unknown"))
-	fmt.Printf("  subscribers: %d\n", listedTopic.Subscribers)
-	if listedTopic.OwnerNode != "" {
-		fmt.Printf("  owner: %s\n", listedTopic.OwnerNode)
-	}
-	if listedTopic.Purpose != "" {
-		fmt.Printf("  purpose: %s\n", listedTopic.Purpose)
-	}
-	if listedTopic.RequestTopic != "" {
-		fmt.Printf("  request_topic: %s\n", listedTopic.RequestTopic)
-	}
-	if listedTopic.ResponseTopic != "" {
-		fmt.Printf("  response_topic: %s\n", listedTopic.ResponseTopic)
-	}
-	if listedTopic.ResponseType != "" {
-		fmt.Printf("  response_type: %s\n", listedTopic.ResponseType)
+func printTopic(listedTopic topic.Topic, verbose bool) {
+	if !verbose {
+		fmt.Printf("%-28s type=%-24s subs=%-3d", listedTopic.Name, defaultString(listedTopic.Type, "unknown"), listedTopic.Subscribers)
+		if listedTopic.OwnerNode != "" {
+			fmt.Printf(" owner=%s", listedTopic.OwnerNode)
+		}
+		if listedTopic.ResponseTopic != "" {
+			fmt.Printf(" response=%s", listedTopic.ResponseTopic)
+		}
+		fmt.Println()
+		return
+	} else {
+		fmt.Printf("%s\n", listedTopic.Name)
+		fmt.Printf("  type: %s\n", defaultString(listedTopic.Type, "unknown"))
+		fmt.Printf("  subscribers: %d\n", listedTopic.Subscribers)
+		if listedTopic.OwnerNode != "" {
+			fmt.Printf("  owner: %s\n", listedTopic.OwnerNode)
+		}
+		if listedTopic.Purpose != "" {
+			fmt.Printf("  purpose: %s\n", listedTopic.Purpose)
+		}
+		if listedTopic.RequestTopic != "" {
+			fmt.Printf("  request_topic: %s\n", listedTopic.RequestTopic)
+		}
+		if listedTopic.ResponseTopic != "" {
+			fmt.Printf("  response_topic: %s\n", listedTopic.ResponseTopic)
+		}
+		if listedTopic.ResponseType != "" {
+			fmt.Printf("  response_type: %s\n", listedTopic.ResponseType)
+		}
 	}
 }

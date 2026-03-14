@@ -15,15 +15,15 @@ import (
 )
 
 type Topic struct {
-	Name        string      `json:"name" msgpack:"name"`
-	Type        string      `json:"type,omitempty" msgpack:"type,omitempty"`
-	Subscribers int         `json:"subscribers,omitempty" msgpack:"subscribers,omitempty"`
-	OwnerNode   string      `json:"owner_node,omitempty" msgpack:"owner_node,omitempty"`
-	Purpose     string      `json:"purpose,omitempty" msgpack:"purpose,omitempty"`
-	RequestTopic string     `json:"request_topic,omitempty" msgpack:"request_topic,omitempty"`
-	ResponseTopic string    `json:"response_topic,omitempty" msgpack:"response_topic,omitempty"`
-	ResponseType string     `json:"response_type,omitempty" msgpack:"response_type,omitempty"`
-	Message     interface{} `json:"message,omitempty" msgpack:"message,omitempty"`
+	Name          string      `json:"name" msgpack:"name"`
+	Type          string      `json:"type,omitempty" msgpack:"type,omitempty"`
+	Subscribers   int         `json:"subscribers,omitempty" msgpack:"subscribers,omitempty"`
+	OwnerNode     string      `json:"owner_node,omitempty" msgpack:"owner_node,omitempty"`
+	Purpose       string      `json:"purpose,omitempty" msgpack:"purpose,omitempty"`
+	RequestTopic  string      `json:"request_topic,omitempty" msgpack:"request_topic,omitempty"`
+	ResponseTopic string      `json:"response_topic,omitempty" msgpack:"response_topic,omitempty"`
+	ResponseType  string      `json:"response_type,omitempty" msgpack:"response_type,omitempty"`
+	Message       interface{} `json:"message,omitempty" msgpack:"message,omitempty"`
 }
 
 const MetadataTopicName = "/topic.metadata"
@@ -205,7 +205,7 @@ func Subscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback func(Call
 		return
 	}
 
-	topicType := fmt.Sprintf("%T", msg)
+	topicType := msgs.GetType(msg)
 	if err := writeEnvelope(conn, msgs.Envelope{Cmd: msgs.CmdSubscribe, Topic: topic, TopicType: topicType}); err != nil {
 		logger.Error("Failed to send SUBSCRIBE:", err)
 		return

@@ -19,6 +19,8 @@ import (
 	"github.com/amar-jay/amaros/pkg/topic"
 )
 
+// task: can ask and recieve response via the the question and response topics. and
+// tasks can be sent via a topic
 const (
 	requestTopic   = "/telegram.question"
 	responseTopic  = "/telegram.response"
@@ -221,19 +223,19 @@ func init() {
 	llmNode.DescribeTopics([]msgs.TopicMetadata{
 		{
 			Topic:         requestTopic,
-			Type:          "*msgs.ExecuteQuestion",
+			Type:          msgs.GetType(msgs.ExecuteQuestion{}),
 			Purpose:       "questions that require a human answer through the llm_question_answer node",
 			ResponseTopic: responseTopic,
-			ResponseType:  "*msgs.ExecuteResponse",
+			ResponseType:  msgs.GetType(msgs.ExecuteResponse{}),
 		},
 		{
 			Topic:   responseTopic,
-			Type:    "*msgs.ExecuteResponse",
+			Type:    msgs.GetType(msgs.ExecuteResponse{}),
 			Purpose: "answers returned by the llm_question_answer node to previously asked questions",
 		},
 		{
 			Topic:   "/llm.execute.result",
-			Type:    "*msgs.ExecuteResult",
+			Type:    msgs.GetType(msgs.ExecuteResult{}),
 			Purpose: "task results sent back to the requester",
 		},
 	})
@@ -275,29 +277,6 @@ func onRequest(ctx topic.CallbackContext) {
 	llmNode.Publish(responseTopic, response)
 }
 
-func onResult(ctx topic.CallbackContext) {
-	res := *result
-	if res.TaskID == "" {
-		ctx.Logger.Warn("received empty result, skipping")
-		return
-	}
-
-	taskMu.Lock()
-	sub, ok := taskDispatch[res.TaskID]
-	if ok {
-		delete(taskDispatch, res.TaskID)
-	}
-	taskMu.Unlock()
-
-	if !ok {
-		return
-	}
-
-	msg := fmt.Sprintf("✅ Task result for: %s\n\nSuccess: %t\nSummary: %s\nOutput: %s",
-		sub.description, res.Success, res.Summary, res.Output)
-	_, _ = telegram.client.sendMessage(sub.chatID, msg)
-}
-
 func main() {
 	// Ensure log output is visible even when the process blocks.
 	log.SetOutput(os.Stdout)
@@ -308,9 +287,6 @@ func main() {
 	log.Printf("  publishing to: %s", responseTopic)
 
 	// Run subscriptions concurrently so we can handle multiple topics.
-	go llmNode.SubscribeWithCallback(requestTopic, question, onRequest)
-	go llmNode.SubscribeWithCallback("/llm.execute.result", result, onResult)
-
-	// Keep the program running while subscriptions process messages.
-	select {}
+	llmNode.Callback(onRequest)
+	llmNode.Subscribe(requestTopic, question)
 }

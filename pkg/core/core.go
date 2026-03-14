@@ -132,7 +132,7 @@ func (r *Core) Subscribe(topic string, topicType string, conn net.Conn) {
 
 	r.Subscribers[topic] = append(r.Subscribers[topic], conn)
 	if r.Types[topic] != "" && topicType != r.Types[topic] {
-		writeEnvelope(conn, msgs.Envelope{Cmd: msgs.RespError, Err: "invalid message type, expected " + r.Types[topic]})
+		writeEnvelope(conn, msgs.Envelope{Cmd: msgs.RespError, Err: "invalid message type, expected " + r.Types[topic] + " got: " + topicType})
 		return
 	}
 	if r.Types[topic] == "" {
@@ -235,14 +235,14 @@ func (r *Core) List(conn net.Conn) {
 	for topicName := range r.Subscribers {
 		meta := r.Metadata[topicName]
 		topicList = append(topicList, t.Topic{
-			Name:        topicName,
-			Type:        firstNonEmpty(r.Types[topicName], meta.Type),
-			Subscribers: len(r.Subscribers[topicName]),
-			OwnerNode:   meta.OwnerNode,
-			Purpose:     meta.Purpose,
-			RequestTopic: meta.RequestTopic,
+			Name:          topicName,
+			Type:          firstNonEmpty(r.Types[topicName], meta.Type),
+			Subscribers:   len(r.Subscribers[topicName]),
+			OwnerNode:     meta.OwnerNode,
+			Purpose:       meta.Purpose,
+			RequestTopic:  meta.RequestTopic,
 			ResponseTopic: meta.ResponseTopic,
-			ResponseType: meta.ResponseType,
+			ResponseType:  meta.ResponseType,
 		})
 	}
 	payload, err := msgpack.Marshal(topicList)

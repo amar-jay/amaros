@@ -1,6 +1,10 @@
 package msgs
 
-import "time"
+import (
+	"encoding/json"
+	"reflect"
+	"time"
+)
 
 type ROS_MSG interface{}
 type String struct {
@@ -33,9 +37,9 @@ type ColorRGBA struct {
 
 type ColorRGB struct {
 	ROS_MSG
-	R float32  `json:"R" msgpack:"R"`
-	G float32  `json:"G" msgpack:"G"`
-	B float32  `json:"B" msgpack:"B"`
+	R float32 `json:"R" msgpack:"R"`
+	G float32 `json:"G" msgpack:"G"`
+	B float32 `json:"B" msgpack:"B"`
 }
 
 type Header struct {
@@ -56,4 +60,39 @@ type TopicMetadata struct {
 	RequestTopic  string `json:"request_topic,omitempty" msgpack:"request_topic,omitempty"`
 	ResponseTopic string `json:"response_topic,omitempty" msgpack:"response_topic,omitempty"`
 	ResponseType  string `json:"response_type,omitempty" msgpack:"response_type,omitempty"`
+}
+
+// TODO: create a codegen for types. use this temporarily
+func GetType(x interface{}) string {
+	t := reflect.TypeOf(x)
+
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	result := map[string]string{}
+
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+
+		// get json tag
+		name := f.Tag.Get("json")
+		if f.Name == "ROS_MSG" {
+			continue
+		}
+
+		// fallback to field name if no tag
+		if name == "" {
+			name = f.Name
+		}
+
+		result[name] = f.Type.Kind().String()
+	}
+
+	b, err := json.Marshal(result)
+	if err != nil {
+		return "unknown"
+	}
+
+	return string(b)
 }

@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amar-jay/amaros/pkg/config"
 	ilog "github.com/amar-jay/amaros/internal/logger"
 	"github.com/amar-jay/amaros/internal/model"
+	"github.com/amar-jay/amaros/pkg/config"
 	"github.com/amar-jay/amaros/pkg/msgs"
 	"github.com/amar-jay/amaros/pkg/node"
 	"github.com/amar-jay/amaros/pkg/topic"
@@ -560,7 +560,7 @@ func (a *Agent) askUser(taskID, question string) (string, error) {
 	defer rxConn.Close()
 
 	responseMsg := &msgs.ExecuteResponse{}
-	topicType := firstNonEmpty(questionEntry.ResponseType, fmt.Sprintf("%T", responseMsg))
+	topicType := firstNonEmpty(questionEntry.ResponseType, msgs.GetType(*responseMsg))
 
 	// Subscribe to the response topic
 	env := msgs.Envelope{

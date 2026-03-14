@@ -3,7 +3,9 @@ module github.com/amar-jay/amaros
 go 1.23.0
 
 require (
+	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/matoous/go-nanoid/v2 v2.1.0
+	github.com/mitchellh/mapstructure v1.5.0
 	github.com/shamaton/msgpack/v2 v2.4.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/viper v1.21.0
