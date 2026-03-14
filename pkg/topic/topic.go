@@ -74,7 +74,7 @@ type CallbackContext struct {
 	// add more fields as needed
 }
 
-func handleSubscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback func(CallbackContext)) {
+func handleSubscribe(conn net.Conn, topic string, msg msgs.AMAROS_MSG, callback func(CallbackContext)) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -182,7 +182,7 @@ func handleList(conn net.Conn) ([]Topic, error) {
 	return topics, nil
 }
 
-func Publish(conn net.Conn, topic string, message msgs.ROS_MSG) {
+func Publish(conn net.Conn, topic string, message msgs.AMAROS_MSG) {
 	if err := Validate(topic); err != nil {
 		logger.Error("Error: invalid topic ", topic)
 		return
@@ -199,7 +199,7 @@ func Publish(conn net.Conn, topic string, message msgs.ROS_MSG) {
 	}
 }
 
-func Subscribe(conn net.Conn, topic string, msg msgs.ROS_MSG, callback func(CallbackContext)) {
+func Subscribe(conn net.Conn, topic string, msg msgs.AMAROS_MSG, callback func(CallbackContext)) {
 	if err := Validate(topic); err != nil {
 		logger.Error("Error: invalid topic ", topic)
 		return

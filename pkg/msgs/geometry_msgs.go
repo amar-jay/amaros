@@ -2,14 +2,14 @@ package msgs
 
 // Vector3 represents a 3D vector.
 type Vector3 struct {
-	ROS_MSG
+	AMAROS_MSG
 	X float64 `json:"x" msgpack:"x"`
 	Y float64 `json:"y" msgpack:"y"`
 	Z float64 `json:"z" msgpack:"z"`
 }
 
 type Quaternion struct {
-	ROS_MSG
+	AMAROS_MSG
 	X float64 `json:"x" msgpack:"x"`
 	Y float64 `json:"y" msgpack:"y"`
 	Z float64 `json:"z" msgpack:"z"`
@@ -18,19 +18,19 @@ type Quaternion struct {
 
 // Twist represents the velocity of a robot in free space broken into its linear and angular parts.
 type Twist struct {
-	ROS_MSG
+	AMAROS_MSG
 	Linear  Vector3 `json:"linear" msgpack:"linear"`
 	Angular Vector3 `json:"angular" msgpack:"angular"`
 }
 
 type Pose struct {
-	ROS_MSG
+	AMAROS_MSG
 	Position    Vector3    `json:"position" msgpack:"position"`
 	Orientation Quaternion `json:"orientation" msgpack:"orientation"`
 }
 
 type Transform struct {
-	ROS_MSG
+	AMAROS_MSG
 	Translation Vector3    `json:"translation" msgpack:"translation"`
 	Rotation    Quaternion `json:"rotation" msgpack:"rotation"`
 }

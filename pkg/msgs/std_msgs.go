@@ -6,29 +6,29 @@ import (
 	"time"
 )
 
-type ROS_MSG interface{}
+type AMAROS_MSG interface{}
 type String struct {
-	ROS_MSG
+	AMAROS_MSG
 	Str string `json:"str" msgpack:"str"`
 }
 
 type Int struct {
-	ROS_MSG
+	AMAROS_MSG
 	Int int `json:"int" msgpack:"int"`
 }
 
 type Float struct {
-	ROS_MSG
+	AMAROS_MSG
 	Float float64 `json:"float" msgpack:"float"`
 }
 
 type Bool struct {
-	ROS_MSG
+	AMAROS_MSG
 	Bool bool `json:"bool" msgpack:"bool"`
 }
 
 type ColorRGBA struct {
-	ROS_MSG
+	AMAROS_MSG
 	R float32 `json:"R" msgpack:"R"`
 	G float32 `json:"G" msgpack:"G"`
 	B float32 `json:"B" msgpack:"B"`
@@ -36,14 +36,14 @@ type ColorRGBA struct {
 }
 
 type ColorRGB struct {
-	ROS_MSG
+	AMAROS_MSG
 	R float32 `json:"R" msgpack:"R"`
 	G float32 `json:"G" msgpack:"G"`
 	B float32 `json:"B" msgpack:"B"`
 }
 
 type Header struct {
-	ROS_MSG
+	AMAROS_MSG
 	Seq     uint32
 	Stamp   time.Time
 	FrameId string
@@ -52,7 +52,7 @@ type Header struct {
 // TopicMetadata advertises topic semantics from the node that owns the topic.
 // Nodes publish this on /topic.metadata so other nodes can discover how a topic is meant to be used.
 type TopicMetadata struct {
-	ROS_MSG
+	AMAROS_MSG
 	Topic         string `json:"topic" msgpack:"topic"`
 	Type          string `json:"type,omitempty" msgpack:"type,omitempty"`
 	OwnerNode     string `json:"owner_node,omitempty" msgpack:"owner_node,omitempty"`
@@ -77,7 +77,7 @@ func GetType(x interface{}) string {
 
 		// get json tag
 		name := f.Tag.Get("json")
-		if f.Name == "ROS_MSG" {
+		if f.Name == "AMAROS_MSG" {
 			continue
 		}
 
