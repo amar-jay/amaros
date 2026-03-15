@@ -75,8 +75,14 @@ func init() {
 		}
 	}
 
-	if _, err := os.Stat(filepath.Join(configDir, "SOUL.md")); os.IsNotExist(err) {
-		if err := os.WriteFile(filepath.Join(configDir, "SOUL.md"), []byte(defaultSystemPrompt), 0644); err != nil {
+	if _, err := os.Stat(filepath.Join(configDir, soulPath)); os.IsNotExist(err) {
+		if err := os.WriteFile(filepath.Join(configDir, soulPath), []byte(defaultSystemPrompt), 0644); err != nil {
+			panic("failed to write default config: " + err.Error())
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(configDir, soulWithMemoryPath)); os.IsNotExist(err) {
+		if err := os.WriteFile(filepath.Join(configDir, soulWithMemoryPath), []byte(memorySystemPrompt), 0644); err != nil {
 			panic("failed to write default config: " + err.Error())
 		}
 	}

@@ -145,6 +145,30 @@ func (tc *TelegramClient) handleCommand(chatID int64, text string) bool {
 	}
 }
 
+func (tc *TelegramClient) notifyAll(text string) {
+	tc.chatIDsMu.RLock()
+	var chatIDs []int64
+	for chatID := range tc.chatIDs {
+		chatIDs = append(chatIDs, chatID)
+	}
+	tc.chatIDsMu.RUnlock()
+
+	// Notify registered chat IDs first.
+	for _, chatID := range chatIDs {
+		_, _ = tc.client.sendMessage(chatID, text)
+	}
+
+	// If no users have messaged yet, use the configured chat_id as a fallback.
+	if len(chatIDs) == 0 && tc.client.config.ChatId != "" {
+		// Allow numeric chat IDs or channel/user handles (e.g. @username).
+		if id, err := strconv.ParseInt(tc.client.config.ChatId, 10, 64); err == nil {
+			_, _ = tc.client.sendMessage(id, text)
+		} else {
+			_, _ = tc.client.sendMessageToChannel(tc.client.config.ChatId, text)
+		}
+	}
+}
+
 func (tc *TelegramClient) askQuestion(questionID, questionText string) (string, error) {
 	tc.chatIDsMu.RLock()
 	var chatIDs []int64
@@ -168,20 +192,7 @@ func (tc *TelegramClient) askQuestion(questionID, questionText string) (string, 
 		tc.pendingMu.Unlock()
 	}()
 
-	// Notify registered chat IDs first.
-	for _, chatID := range chatIDs {
-		_, _ = tc.client.sendMessage(chatID, questionText)
-	}
-
-	// If no users have messaged yet, use the configured chat_id as a fallback.
-	if len(chatIDs) == 0 && tc.client.config.ChatId != "" {
-		// Allow numeric chat IDs or channel/user handles (e.g. @username).
-		if id, err := strconv.ParseInt(tc.client.config.ChatId, 10, 64); err == nil {
-			_, _ = tc.client.sendMessage(id, questionText)
-		} else {
-			_, _ = tc.client.sendMessageToChannel(tc.client.config.ChatId, questionText)
-		}
-	}
+	tc.notifyAll(questionText)
 
 	select {
 	case answer := <-answerCh:
@@ -277,6 +288,36 @@ func onRequest(ctx topic.CallbackContext) {
 	llmNode.Publish(responseTopic, response)
 }
 
+func onResult(ctx topic.CallbackContext) {
+	res := *result
+
+	taskMu.Lock()
+	sub, ok := taskDispatch[res.TaskID]
+	if ok {
+		delete(taskDispatch, res.TaskID)
+	}
+	taskMu.Unlock()
+
+	status := "Failed"
+	if res.Success {
+		status = "Success"
+	}
+
+	msg := fmt.Sprintf("[%s] Task finished.\nStatus: %s\nSummary: %s", res.TaskID, status, res.Summary)
+	if res.Output != "" {
+		msg += fmt.Sprintf("\nOutput:\n%s", res.Output)
+	}
+
+	if ok && sub.chatID != 0 {
+		_, _ = telegram.client.sendMessage(sub.chatID, msg)
+		ctx.Logger.WithFields(map[string]interface{}{"task_id": res.TaskID}).Info("Sent result back to original caller")
+		return
+	}
+
+	telegram.notifyAll(msg)
+	ctx.Logger.WithFields(map[string]interface{}{"task_id": res.TaskID}).Info("Sent result to all registered chats")
+}
+
 func main() {
 	// Ensure log output is visible even when the process blocks.
 	log.SetOutput(os.Stdout)
@@ -284,9 +325,17 @@ func main() {
 
 	log.Println("telegram_messaging node started")
 	log.Printf("  subscribed to: %s", requestTopic)
+	log.Printf("  subscribed to: /llm.execute.result")
 	log.Printf("  publishing to: %s", responseTopic)
+	log.Printf("  publishing to: /llm.execute.task")
 
 	// Run subscriptions concurrently so we can handle multiple topics.
 	llmNode.Callback(onRequest)
 	llmNode.Subscribe(requestTopic, question)
+
+	llmNode.Callback(onResult)
+	llmNode.Subscribe("/llm.execute.result", result)
+
+	// Block forever.
+	select {}
 }

@@ -52,4 +52,3 @@ func (m *NodeManifest) GetVersion(version string) *VersionInfo {
 func (m *NodeManifest) LatestVersion() *VersionInfo {
 	return m.GetVersion(m.Latest)
 }
-

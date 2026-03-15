@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ilog "github.com/amar-jay/amaros/internal/logger"
+	"github.com/amar-jay/amaros/internal/memory"
 	"github.com/amar-jay/amaros/internal/model"
 	"github.com/amar-jay/amaros/pkg/config"
 	"github.com/amar-jay/amaros/pkg/msgs"
@@ -34,6 +35,8 @@ type AgentAction struct {
 	TimeoutSeconds int             `json:"timeout_seconds,omitempty"`
 	Summary        string          `json:"summary,omitempty"`
 	Output         string          `json:"output,omitempty"`
+	Key            string          `json:"key,omitempty"`
+	Value          string          `json:"value,omitempty"`
 }
 
 // Agent runs the agentic loop for task execution.
@@ -44,6 +47,7 @@ type Agent struct {
 	logger        *ilog.Logger
 	topicCatalog  []promptTopic
 	messages      []model.Message
+	memory        *memory.TieredMemory
 }
 
 type promptTopic struct {
@@ -61,13 +65,14 @@ type promptTopic struct {
 }
 
 // NewAgent creates a new Agent.
-func NewAgent(p model.Provider, n *node.Node, t []topic.Topic, maxIter int) *Agent {
+func NewAgent(p model.Provider, n *node.Node, t []topic.Topic, maxIter int, tm *memory.TieredMemory) *Agent {
 	a := &Agent{
 		provider:      p,
 		node:          n,
 		maxIterations: maxIter,
 		logger:        ilog.New(),
 		topicCatalog:  buildPromptTopics(t),
+		memory:        tm,
 	}
 	a.setSystemPrompt()
 	return a
@@ -324,6 +329,18 @@ func (a *Agent) Run(task *msgs.ExecuteTask) {
 			a.addMessage(model.RoleUser, fmt.Sprintf("User response: %s", response))
 
 		case "topic_publish":
+			if action.Topic == resultTopic {
+				failed := strings.Contains("failed", action.Output)
+				msg := "Task completed successfully"
+				if failed {
+					msg = "Task failed"
+				}
+				a.logger.WithFields(map[string]interface{}{
+					"summary": action.Summary,
+				}).Info(msg)
+				a.publishResult(task.TaskID, failed, action.Summary, action.Output)
+				return
+			}
 			result, err := a.publishToTopic(action)
 			if err != nil {
 				a.addMessage(model.RoleUser, fmt.Sprintf("Topic publish error: %v", err))
@@ -339,12 +356,41 @@ func (a *Agent) Run(task *msgs.ExecuteTask) {
 			}
 			a.addMessage(model.RoleUser, result)
 
-		case "complete":
+		case "memory_store":
 			a.logger.WithFields(map[string]interface{}{
-				"summary": action.Summary,
-			}).Info("task completed successfully")
-			a.publishResult(task.TaskID, true, action.Summary, action.Output)
-			return
+				"key":   action.Key,
+				"value": action.Value,
+			}).Info("storing in memory")
+
+			if a.memory != nil {
+				err := a.memory.Set(action.Key, []byte(action.Value), memory.Warm)
+				if err != nil {
+					a.addMessage(model.RoleUser, fmt.Sprintf("Failed to store memory: %v", err))
+				} else {
+					a.addMessage(model.RoleUser, fmt.Sprintf("Successfully stored key %q", action.Key))
+					a.setSystemPrompt() // update the prompt with new key
+				}
+			} else {
+				a.addMessage(model.RoleUser, "Memory is not configured.")
+			}
+
+		case "memory_fetch":
+			a.logger.WithFields(map[string]interface{}{
+				"key": action.Key,
+			}).Info("fetching from memory")
+
+			if a.memory != nil {
+				entry, err := a.memory.Get(action.Key)
+				if err != nil {
+					a.addMessage(model.RoleUser, fmt.Sprintf("Failed to fetch memory: %v", err))
+				} else if entry == nil {
+					a.addMessage(model.RoleUser, fmt.Sprintf("Memory key %q not found", action.Key))
+				} else {
+					a.addMessage(model.RoleUser, fmt.Sprintf("Memory value for %q: %s", action.Key, string(entry.Value)))
+				}
+			} else {
+				a.addMessage(model.RoleUser, "Memory is not configured.")
+			}
 
 		case "error":
 			a.logger.WithFields(map[string]interface{}{
@@ -354,7 +400,7 @@ func (a *Agent) Run(task *msgs.ExecuteTask) {
 			return
 
 		default:
-			a.addMessage(model.RoleUser, fmt.Sprintf("Unknown action %q. Valid actions: execute, ask, complete, error.", action.Action))
+			a.addMessage(model.RoleUser, fmt.Sprintf("Unknown action %q. Valid actions: execute, topic_publish, topic_request, memory_store, memory_fetch.", action.Action))
 		}
 	}
 
@@ -371,9 +417,25 @@ func (a *Agent) setSystemPrompt() error {
 	if err != nil {
 		return err
 	}
+
+	memKeys := "- None"
+	if a.memory != nil {
+		entries, err := a.memory.List("", memory.Hot|memory.Warm|memory.Cold)
+		if err == nil && len(entries) > 0 {
+			var keys []string
+			for _, e := range entries {
+				keys = append(keys, "- "+e.Key)
+			}
+			memKeys = strings.Join(keys, "\n")
+		} else {
+			memKeys = "- No memory keys currently exist."
+		}
+	} else {
+		memKeys = "- Memory subsystem unavailable"
+	}
+
 	content := strings.ReplaceAll(systemPrompt, "![topics_list]", formatAvailableTopics(a.topicCatalog))
-	content = strings.ReplaceAll(content, "![result_topic]", "/llm.execute.result")
-	content = strings.ReplaceAll(content, "![memory_keys_list]", "Currently no memory integration available. Memory-related actions will be acknowledged but not persisted. Future iterations may include memory functionality.")
+	content = strings.ReplaceAll(content, "![memory_keys_list]", memKeys)
 	content = strings.ReplaceAll(content, "![conditional_topic_usage_rules]", topicUsageRules(a.topicCatalog))
 	if len(a.messages) == 0 {
 		a.messages = []model.Message{{Role: model.RoleSystem, Content: content}}
@@ -482,6 +544,12 @@ func (a *Agent) publishToTopic(action *AgentAction) (string, error) {
 	}
 
 	a.node.Publish(action.Topic, payload)
+	
+	// Issue a warning if the LLM provided a response_topic for a one-way publish action
+	if action.ResponseTopic != "" {
+		return fmt.Sprintf("Published payload to %s: %s (Warning: response_topic ignored. For request/response flows, use topic_request action instead)", action.Topic, formatPayloadForPrompt(payload)), nil
+	}
+
 	return fmt.Sprintf("Published payload to %s: %s", action.Topic, formatPayloadForPrompt(payload)), nil
 }
 
@@ -489,9 +557,7 @@ func (a *Agent) requestTopic(action *AgentAction) (string, error) {
 	if action.RequestTopic == "" {
 		return "", fmt.Errorf("missing request_topic field")
 	}
-	if action.ResponseTopic == "" {
-		return "", fmt.Errorf("missing response_topic field")
-	}
+	// Let fallback logic resolve ResponseTopic if omitted.
 
 	requestEntry, ok := a.lookupTopic(action.RequestTopic)
 	if !ok || !requestEntry.Publishable {
@@ -671,16 +737,36 @@ func (a *Agent) publishAndWait(requestTopic string, payload interface{}, respons
 			continue
 		}
 
-		var responsePayload interface{}
-		if err := msgpack.Unmarshal(respEnv.Payload, &responsePayload); err != nil {
+		var rawResponsePayload interface{}
+		if err := msgpack.Unmarshal(respEnv.Payload, &rawResponsePayload); err != nil {
 			return nil, fmt.Errorf("unmarshal response payload: %w", err)
 		}
+
+		responsePayload := convertMsgpackMap(rawResponsePayload)
 
 		if !matchesGenericResponse(responsePayload, matchField, matchValue) {
 			continue
 		}
 
 		return responsePayload, nil
+	}
+}
+
+func convertMsgpackMap(v interface{}) interface{} {
+	switch m := v.(type) {
+	case map[interface{}]interface{}:
+		res := make(map[string]interface{})
+		for k, val := range m {
+			res[fmt.Sprint(k)] = convertMsgpackMap(val)
+		}
+		return res
+	case []interface{}:
+		for i, val := range m {
+			m[i] = convertMsgpackMap(val)
+		}
+		return m
+	default:
+		return v
 	}
 }
 

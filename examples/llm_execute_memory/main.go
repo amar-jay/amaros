@@ -8,6 +8,7 @@ import (
 	gonanoid "github.com/matoous/go-nanoid/v2"
 
 	"github.com/amar-jay/amaros/internal/model"
+	"github.com/amar-jay/amaros/internal/memory"
 	"github.com/amar-jay/amaros/internal/openrouter"
 	"github.com/amar-jay/amaros/pkg/config"
 	"github.com/amar-jay/amaros/pkg/msgs"
@@ -19,7 +20,6 @@ const (
 	defaultModel  = "openrouter/hunter-alpha"
 	taskTopic     = "/llm.execute.task"
 	questionTopic = "/telegram.question"
-	responseTopic = "/telegram.response"
 	resultTopic   = "/llm.execute.result"
 	maxIterations = 50
 	cmdTimeout    = 30 * time.Second
@@ -32,6 +32,7 @@ var (
 	execNode *node.Node
 	task     = &msgs.ExecuteTask{}
 	provider model.Provider
+	tm       *memory.TieredMemory
 )
 
 func init() {
@@ -45,6 +46,13 @@ func init() {
 	}
 
 	provider = openrouter.New(apiKey)
+
+	// initialize memory
+	var err error
+	tm, err = memory.NewTieredMemory("~/memory", "")
+	if err != nil {
+		log.Fatalf("failed to init memory: %v", err)
+	}
 
 	execNode = node.Init("llm_execute")
 	execNode.DescribeTopics([]msgs.TopicMetadata{
@@ -91,12 +99,12 @@ func onTask(ctx topic.CallbackContext) {
 	}).Info("received task, starting agentic loop")
 
 	go func(taskCopy msgs.ExecuteTask, topics []topic.Topic) {
-		agent := NewAgent(provider, execNode, topics, maxIterations)
+		agent := NewAgent(provider, execNode, topics, maxIterations, tm)
 		agent.Run(&taskCopy)
 	}(t, append([]topic.Topic(nil), ctx.Topics...))
 }
 
-// llm_execute is an agentic node that receives task descriptions on
+// llm_execute_memory is an agentic node that receives task descriptions on
 // /llm.execute.task and autonomously executes them by running shell
 // commands in a loop. It uses an LLM to decide the next action at
 // each step.
@@ -108,7 +116,7 @@ func onTask(ctx topic.CallbackContext) {
 //	subscribes: /llm.execute.response — user answers (temporary)
 //	publishes:  /llm.execute.result   — final task result
 func main() {
-	fmt.Println("llm_execute node started")
+	fmt.Println("llm_execute_memory node started")
 	fmt.Printf("  subscribed to: %s\n", taskTopic)
 	fmt.Printf("  publishes to:  %s, %s\n", questionTopic, resultTopic)
 

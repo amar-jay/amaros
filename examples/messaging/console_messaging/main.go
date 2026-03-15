@@ -21,6 +21,7 @@ const (
 var (
 	llmNode  *node.Node
 	question = &msgs.ExecuteQuestion{}
+	result   = &msgs.ExecuteResult{}
 	reader   = bufio.NewReader(os.Stdin)
 )
 
@@ -30,19 +31,24 @@ func init() {
 	llmNode.DescribeTopics([]msgs.TopicMetadata{
 		{
 			Topic:         requestTopic,
-			Type:          "*msgs.ExecuteQuestion",
+			Type:          msgs.GetType(msgs.ExecuteQuestion{}),
 			Purpose:       "questions that require a human answer through the llm_question_answer node",
 			ResponseTopic: responseTopic,
-			ResponseType:  "*msgs.ExecuteResponse",
+			ResponseType:  msgs.GetType(msgs.ExecuteResponse{}),
 		},
 		{
 			Topic:   responseTopic,
-			Type:    "*msgs.ExecuteResponse",
+			Type:    msgs.GetType(msgs.ExecuteResponse{}),
 			Purpose: "answers returned by the llm_question_answer node to previously asked questions",
+		},
+		{
+			Topic:   "/llm.execute.result",
+			Type:    msgs.GetType(msgs.ExecuteResult{}),
+			Purpose: "task results sent back to the requester",
 		},
 	})
 	llmNode.OnShutdown(func() {
-		fmt.Println("shutting down llm_question_answer node")
+		fmt.Println("shutting down console_messaging node")
 	})
 }
 
@@ -82,11 +88,33 @@ func onRequest(ctx topic.CallbackContext) {
 	llmNode.Publish(responseTopic, response)
 }
 
+func onResult(ctx topic.CallbackContext) {
+	res := *result
+
+	status := "Failed"
+	if res.Success {
+		status = "Success"
+	}
+
+	fmt.Printf("\n--- Task Result [%s] ---\nStatus: %s\nSummary: %s\n", res.TaskID, status, res.Summary)
+	if res.Output != "" {
+		fmt.Printf("Output:\n%s\n", res.Output)
+	}
+	fmt.Println("-----------------------")
+}
+
 func main() {
-	fmt.Printf("llm_question_answer node started\n")
+	fmt.Printf("console_messaging node started\n")
 	fmt.Printf("  subscribed to: %s\n", requestTopic)
+	fmt.Printf("  subscribed to: /llm.execute.result\n")
 	fmt.Printf("  publishing to: %s\n", responseTopic)
 
 	llmNode.Callback(onRequest)
 	llmNode.Subscribe(requestTopic, question)
+
+	llmNode.Callback(onResult)
+	llmNode.Subscribe("/llm.execute.result", result)
+
+	// Keep the process running
+	select {}
 }

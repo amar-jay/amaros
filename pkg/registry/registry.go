@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/amar-jay/amaros/pkg/config"
 	ilog "github.com/amar-jay/amaros/internal/logger"
+	"github.com/amar-jay/amaros/pkg/config"
 )
 
 // Registry is the top-level API for managing AMAROS nodes.
