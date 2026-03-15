@@ -1,0 +1,845 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	ilog "github.com/amar-jay/amaros/internal/logger"
+	"github.com/amar-jay/amaros/internal/model"
+	"github.com/amar-jay/amaros/pkg/config"
+	"github.com/amar-jay/amaros/pkg/memory"
+	"github.com/amar-jay/amaros/pkg/msgs"
+	"github.com/amar-jay/amaros/pkg/node"
+	"github.com/amar-jay/amaros/pkg/topic"
+	msgpack "github.com/shamaton/msgpack/v2"
+)
+
+// AgentAction represents a parsed action from the LLM response.
+type AgentAction struct {
+	Action         string          `json:"action"`
+	Command        string          `json:"command,omitempty"`
+	Question       string          `json:"question,omitempty"`
+	Topic          string          `json:"topic,omitempty"`
+	RequestTopic   string          `json:"request_topic,omitempty"`
+	ResponseTopic  string          `json:"response_topic,omitempty"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	MatchField     string          `json:"match_field,omitempty"`
+	MatchValue     string          `json:"match_value,omitempty"`
+	TimeoutSeconds int             `json:"timeout_seconds,omitempty"`
+	Summary        string          `json:"summary,omitempty"`
+	Output         string          `json:"output,omitempty"`
+}
+
+// Agent runs the agentic loop for task execution.
+type Agent struct {
+	provider       model.Provider
+	node           *node.Node
+	maxIterations  int
+	logger         *ilog.Logger
+	topicCatalog   []promptTopic
+	messages       []model.Message
+	memoryManager  *memory.Manager
+	episodicMemory string
+	semanticMemory string
+	activeTask     *msgs.ExecuteTask
+}
+
+type promptTopic struct {
+	Name          string
+	Type          string
+	Publishable   bool
+	Waitable      bool
+	Subscribers   int
+	OwnerNode     string
+	Purpose       string
+	RequestTopic  string
+	ResponseTopic string
+	ResponseType  string
+	Source        string
+}
+
+// NewAgent creates a new Agent.
+func NewAgent(p model.Provider, n *node.Node, m *memory.Manager, t []topic.Topic, maxIter int) *Agent {
+	a := &Agent{
+		provider:       p,
+		node:           n,
+		maxIterations:  maxIter,
+		logger:         ilog.New(),
+		topicCatalog:   buildPromptTopics(t),
+		memoryManager:  m,
+		episodicMemory: "- (memory not loaded yet)",
+		semanticMemory: "- (memory not loaded yet)",
+	}
+	a.setSystemPrompt()
+	return a
+}
+
+func buildPromptTopics(observedTopics []topic.Topic) []promptTopic {
+	runtimeTopics := make(map[string]topic.Topic, len(observedTopics))
+
+	for _, observedTopic := range observedTopics {
+		if observedTopic.Name == "" {
+			continue
+		}
+		existing := runtimeTopics[observedTopic.Name]
+		if existing.OwnerNode == "" {
+			existing.OwnerNode = observedTopic.OwnerNode
+		}
+		if existing.Purpose == "" {
+			existing.Purpose = observedTopic.Purpose
+		}
+		if existing.RequestTopic == "" {
+			existing.RequestTopic = observedTopic.RequestTopic
+		}
+		if existing.ResponseTopic == "" {
+			existing.ResponseTopic = observedTopic.ResponseTopic
+		}
+		if existing.ResponseType == "" {
+			existing.ResponseType = observedTopic.ResponseType
+		}
+
+		if existing.Type == "" {
+			existing.Type = observedTopic.Type
+		}
+		if observedTopic.Type != "" {
+			existing.Type = observedTopic.Type
+		}
+		if observedTopic.Subscribers > existing.Subscribers {
+			existing.Subscribers = observedTopic.Subscribers
+		}
+		existing.Name = observedTopic.Name
+		runtimeTopics[observedTopic.Name] = existing
+	}
+
+	merged := make(map[string]promptTopic, len(runtimeTopics))
+
+	for _, observedTopic := range runtimeTopics {
+		entry := promptTopic{
+			Name:          observedTopic.Name,
+			Type:          observedTopic.Type,
+			Publishable:   observedTopic.Subscribers > 0,
+			Waitable:      true,
+			Subscribers:   observedTopic.Subscribers,
+			OwnerNode:     observedTopic.OwnerNode,
+			Purpose:       observedTopic.Purpose,
+			RequestTopic:  observedTopic.RequestTopic,
+			ResponseTopic: observedTopic.ResponseTopic,
+			ResponseType:  observedTopic.ResponseType,
+			Source:        "runtime",
+		}
+
+		if existing, ok := merged[observedTopic.Name]; ok {
+			merged[observedTopic.Name] = mergePromptTopic(existing, entry)
+			continue
+		}
+
+		merged[observedTopic.Name] = entry
+	}
+
+	result := make([]promptTopic, 0, len(merged))
+	for _, entry := range merged {
+		if entry.Type == "" {
+			entry.Type = "unknown"
+		}
+		if entry.Source == "" {
+			entry.Source = "runtime"
+		}
+		result = append(result, entry)
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Name == result[j].Name {
+			return result[i].Source < result[j].Source
+		}
+		return result[i].Name < result[j].Name
+	})
+
+	return result
+}
+
+func mergePromptTopic(current, incoming promptTopic) promptTopic {
+	merged := current
+	if merged.Type == "" || merged.Type == "unknown" {
+		merged.Type = incoming.Type
+	}
+	merged.Publishable = merged.Publishable || incoming.Publishable
+	merged.Waitable = merged.Waitable || incoming.Waitable
+	if incoming.Subscribers > merged.Subscribers {
+		merged.Subscribers = incoming.Subscribers
+	}
+	if merged.OwnerNode == "" {
+		merged.OwnerNode = incoming.OwnerNode
+	}
+	if merged.Purpose == "" {
+		merged.Purpose = incoming.Purpose
+	}
+	if merged.RequestTopic == "" {
+		merged.RequestTopic = incoming.RequestTopic
+	}
+	if merged.ResponseTopic == "" {
+		merged.ResponseTopic = incoming.ResponseTopic
+	}
+	if merged.ResponseType == "" {
+		merged.ResponseType = incoming.ResponseType
+	}
+	if merged.Source == "" {
+		merged.Source = incoming.Source
+	}
+	return merged
+}
+
+func formatAvailableTopics(topics []promptTopic) string {
+	if len(topics) == 0 {
+		return "- No topics were discoverable at task start. Use /llm.execute.question when you need user input and expect answers on /llm.execute.response."
+	}
+
+	var builder strings.Builder
+	for _, availableTopic := range topics {
+		topicType := availableTopic.Type
+		if topicType == "" {
+			topicType = "unknown"
+		}
+
+		builder.WriteString("- ")
+		builder.WriteString(availableTopic.Name)
+		builder.WriteString(" | type: ")
+		builder.WriteString(topicType)
+		builder.WriteString(" | publishable: ")
+		builder.WriteString(strconv.FormatBool(availableTopic.Publishable))
+		builder.WriteString(" | waitable: ")
+		builder.WriteString(strconv.FormatBool(availableTopic.Waitable))
+		builder.WriteString(" | subscribers: ")
+		builder.WriteString(strconv.Itoa(availableTopic.Subscribers))
+
+		if availableTopic.OwnerNode != "" {
+			builder.WriteString(" | owner: ")
+			builder.WriteString(availableTopic.OwnerNode)
+		}
+
+		if availableTopic.Purpose != "" {
+			builder.WriteString(" | purpose: ")
+			builder.WriteString(availableTopic.Purpose)
+		}
+
+		if availableTopic.RequestTopic != "" {
+			builder.WriteString(" | request_topic: ")
+			builder.WriteString(availableTopic.RequestTopic)
+		}
+
+		if availableTopic.ResponseTopic != "" {
+			builder.WriteString(" | response_topic: ")
+			builder.WriteString(availableTopic.ResponseTopic)
+		}
+
+		if availableTopic.ResponseType != "" {
+			builder.WriteString(" | response_type: ")
+			builder.WriteString(availableTopic.ResponseType)
+		}
+
+		if availableTopic.Source != "" {
+			builder.WriteString(" | source: ")
+			builder.WriteString(availableTopic.Source)
+		}
+
+		builder.WriteString("\n")
+	}
+
+	return strings.TrimSpace(builder.String())
+}
+
+func topicUsageRules(topics []promptTopic) string {
+	var builder strings.Builder
+	if len(topics) > 0 {
+		builder.WriteString("- The topic list below is deduplicated by topic name and enriched with owner-provided metadata when available.\n")
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+// Run executes the agentic loop for the given task.
+func (a *Agent) Run(task *msgs.ExecuteTask) {
+	a.activeTask = task
+	a.logger.WithFields(map[string]interface{}{
+		"task_id":     task.TaskID,
+		"description": task.Description,
+	}).Info("starting agentic loop with memory")
+
+	a.addMessage(model.RoleUser, fmt.Sprintf("Task: %s", task.Description))
+	a.refreshMemory(task)
+
+	if err := a.refreshTopicCatalog(); err != nil {
+		a.logger.WithFields(map[string]interface{}{
+			"error": err.Error(),
+		}).Warn("failed to refresh runtime topic catalog")
+	}
+
+	for i := 0; i < a.maxIterations; i++ {
+		if err := a.refreshTopicCatalog(); err != nil {
+			a.logger.WithFields(map[string]interface{}{
+				"error": err.Error(),
+			}).Warn("failed to refresh runtime topic catalog")
+		}
+
+		start := time.Now()
+		action, err := a.callLLM()
+		if err != nil {
+			// If parse error, ask the LLM to correct itself and continue
+			if strings.Contains(err.Error(), "failed to parse") {
+				a.addMessage(model.RoleUser, "Your previous response was not valid JSON. Respond with ONLY a JSON object with an 'action' field.")
+				continue
+			}
+
+			// Fatal LLM error
+			a.logger.Error("LLM call failed: ", err)
+			a.publishResult(task.TaskID, false, fmt.Sprintf("LLM error: %v", err), "")
+			return
+		}
+		elapsed := time.Since(start)
+
+		a.logger.WithFields(map[string]interface{}{
+			"iteration":         i + 1,
+			"task_id":           task.TaskID,
+			"llm_response_time": fmt.Sprintf("%.0f s", elapsed.Seconds()),
+		}).Info("agent iteration")
+
+		switch action.Action {
+		case "execute":
+			a.logger.WithFields(map[string]interface{}{
+				"command": action.Command,
+			}).Info("executing command")
+
+			stdout, stderr, exitCode, err := RunCommand(context.Background(), action.Command, cmdTimeout)
+			if err != nil {
+				a.addMessage(model.RoleUser, fmt.Sprintf("Command execution error: %v", err))
+				continue
+			}
+
+			result := formatCommandResult(stdout, stderr, exitCode)
+			a.logger.WithFields(map[string]interface{}{
+				"exit_code": exitCode,
+			}).Info("command completed")
+			a.addMessage(model.RoleUser, result)
+
+		case "ask":
+			a.logger.WithFields(map[string]interface{}{
+				"question": action.Question,
+			}).Info("asking user a question")
+
+			response, err := a.askUser(task.TaskID, action.Question)
+			if err != nil {
+				a.logger.Warn("failed to get user response: ", err)
+				a.addMessage(model.RoleUser, fmt.Sprintf("Failed to get user response: %v. Please proceed without this information or try a different approach.", err))
+				continue
+			}
+			a.addMessage(model.RoleUser, fmt.Sprintf("User response: %s", response))
+
+		case "topic_publish":
+			result, err := a.publishToTopic(action)
+			if err != nil {
+				a.addMessage(model.RoleUser, fmt.Sprintf("Topic publish error: %v", err))
+				continue
+			}
+			a.addMessage(model.RoleUser, result)
+
+		case "topic_request":
+			result, err := a.requestTopic(action)
+			if err != nil {
+				a.addMessage(model.RoleUser, fmt.Sprintf("Topic request error: %v", err))
+				continue
+			}
+			a.addMessage(model.RoleUser, result)
+
+		case "complete":
+			a.logger.WithFields(map[string]interface{}{
+				"summary": action.Summary,
+			}).Info("task completed successfully")
+			a.publishResult(task.TaskID, true, action.Summary, action.Output)
+			return
+
+		case "error":
+			a.logger.WithFields(map[string]interface{}{
+				"summary": action.Summary,
+			}).Error("task failed")
+			a.publishResult(task.TaskID, false, action.Summary, "")
+			return
+
+		default:
+			a.addMessage(model.RoleUser, fmt.Sprintf("Unknown action %q. Valid actions: execute, ask, complete, error.", action.Action))
+		}
+	}
+
+	a.logger.Warn("max iterations reached")
+	a.publishResult(task.TaskID, false, "max iterations reached without completing the task", "")
+}
+
+func (a *Agent) addMessage(role model.Role, content string) {
+	a.messages = append(a.messages, model.Message{Role: role, Content: content})
+}
+
+func (a *Agent) setSystemPrompt() error {
+	systemPrompt, err := config.GetSoul()
+	if err != nil {
+		return err
+	}
+	content := strings.ReplaceAll(systemPrompt, "![topics_list]", formatAvailableTopics(a.topicCatalog))
+	content = strings.ReplaceAll(content, "![conditional_topic_usage_rules]", topicUsageRules(a.topicCatalog))
+	content = strings.ReplaceAll(content, "![episodic_memory]", a.episodicMemory)
+	content = strings.ReplaceAll(content, "![semantic_memory]", a.semanticMemory)
+	if len(a.messages) == 0 {
+		a.messages = []model.Message{{Role: model.RoleSystem, Content: content}}
+		return nil
+	}
+	a.messages[0] = model.Message{Role: model.RoleSystem, Content: content}
+	return nil
+}
+
+func (a *Agent) refreshTopicCatalog() error {
+	runtimeTopics, err := fetchRuntimeTopics()
+	if err != nil {
+		return err
+	}
+	a.topicCatalog = buildPromptTopics(runtimeTopics)
+	return a.setSystemPrompt()
+}
+
+func (a *Agent) refreshMemory(task *msgs.ExecuteTask) {
+	if a.memoryManager == nil {
+		a.episodicMemory = "- (memory disabled)"
+		a.semanticMemory = "- (memory disabled)"
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	recent, err := a.memoryManager.Recent(5)
+	if err != nil {
+		a.episodicMemory = "- (failed to load episodic memory)"
+	} else {
+		a.episodicMemory = memory.FormatNotesForPrompt(recent)
+	}
+
+	if task != nil {
+		recalled, err := a.memoryManager.Recall(ctx, task.Description, 5)
+		if err != nil {
+			a.semanticMemory = "- (failed to load semantic memory)"
+		} else {
+			a.semanticMemory = memory.FormatNotesForPrompt(recalled)
+		}
+	}
+	_ = a.setSystemPrompt()
+}
+
+func (a *Agent) callLLM() (*AgentAction, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), llmTimeout)
+	defer cancel()
+
+	resp, err := a.provider.Complete(ctx, model.CompletionRequest{
+		Model:       defaultModel,
+		Messages:    a.messages,
+		Temperature: 0.2,
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("LLM request failed: %w", err)
+	}
+
+	// Add assistant response to history
+	a.addMessage(model.RoleAssistant, resp.Content)
+
+	action, err := parseAction(resp.Content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse LLM response: %w (raw: %s)", err, resp.Content)
+	}
+
+	return action, nil
+}
+
+func parseAction(content string) (*AgentAction, error) {
+	cleaned := strings.TrimSpace(content)
+
+	// Strip markdown code fences if present
+	if strings.HasPrefix(cleaned, "```") {
+		lines := strings.Split(cleaned, "\n")
+		if len(lines) >= 3 {
+			cleaned = strings.Join(lines[1:len(lines)-1], "\n")
+		}
+	}
+	cleaned = strings.TrimSpace(cleaned)
+
+	// Find JSON object boundaries
+	start := strings.Index(cleaned, "{")
+	end := strings.LastIndex(cleaned, "}")
+	if start >= 0 && end > start {
+		cleaned = cleaned[start : end+1]
+	}
+
+	var action AgentAction
+	if err := json.Unmarshal([]byte(cleaned), &action); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	if action.Action == "" {
+		return nil, fmt.Errorf("missing 'action' field in response")
+	}
+
+	return &action, nil
+}
+
+func fetchRuntimeTopics() ([]topic.Topic, error) {
+	conf := config.Get()
+	url := net.JoinHostPort(conf.Core.Host, strconv.Itoa(conf.Core.RxPort))
+	conn, err := net.Dial("tcp", url)
+	if err != nil {
+		return nil, fmt.Errorf("dial topic server: %w", err)
+	}
+	defer conn.Close()
+
+	topics, err := topic.FetchList(conn)
+	if err != nil {
+		return nil, fmt.Errorf("fetch topic list: %w", err)
+	}
+	return topics, nil
+}
+
+func (a *Agent) publishToTopic(action *AgentAction) (string, error) {
+	if action.Topic == "" {
+		return "", fmt.Errorf("missing topic field")
+	}
+
+	entry, ok := a.lookupTopic(action.Topic)
+	if !ok || !entry.Publishable {
+		return "", fmt.Errorf("topic %s is not currently publishable", action.Topic)
+	}
+
+	payload, err := decodeActionPayload(action.Payload)
+	if err != nil {
+		return "", err
+	}
+
+	a.node.Publish(action.Topic, payload)
+	return fmt.Sprintf("Published payload to %s: %s", action.Topic, formatPayloadForPrompt(payload)), nil
+}
+
+func (a *Agent) requestTopic(action *AgentAction) (string, error) {
+	if action.RequestTopic == "" {
+		return "", fmt.Errorf("missing request_topic field")
+	}
+	if action.ResponseTopic == "" {
+		return "", fmt.Errorf("missing response_topic field")
+	}
+
+	requestEntry, ok := a.lookupTopic(action.RequestTopic)
+	if !ok || !requestEntry.Publishable {
+		return "", fmt.Errorf("request topic %s is not currently publishable", action.RequestTopic)
+	}
+
+	responseTopicName := action.ResponseTopic
+	responseTopicType := ""
+	if responseTopicName == "" {
+		responseTopicName = requestEntry.ResponseTopic
+		responseTopicType = requestEntry.ResponseType
+	}
+	if responseTopicName == "" {
+		return "", fmt.Errorf("request topic %s does not advertise a response topic and response_topic was not provided", action.RequestTopic)
+	}
+
+	responseEntry, ok := a.lookupTopic(responseTopicName)
+	if !ok || !responseEntry.Waitable {
+		if responseTopicType == "" {
+			return "", fmt.Errorf("response topic %s is not available as a waitable topic", responseTopicName)
+		}
+	}
+	if responseTopicType == "" {
+		responseTopicType = responseEntry.ResponseType
+	}
+	if responseTopicType == "" {
+		responseTopicType = responseEntry.Type
+	}
+	if responseTopicType == "" || responseTopicType == "unknown" {
+		return "", fmt.Errorf("response topic %s has unknown type", responseTopicName)
+	}
+
+	payload, err := decodeActionPayload(action.Payload)
+	if err != nil {
+		return "", err
+	}
+
+	timeout := responseWait
+	if action.TimeoutSeconds > 0 {
+		timeout = time.Duration(action.TimeoutSeconds) * time.Second
+	}
+
+	responsePayload, err := a.publishAndWait(action.RequestTopic, payload, responseTopicName, responseTopicType, action.MatchField, action.MatchValue, timeout)
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("Received response from %s: %s", responseTopicName, formatPayloadForPrompt(responsePayload)), nil
+}
+
+// askUser publishes a question on /llm.execute.question and waits for
+// a response on /llm.execute.response via a temporary subscription.
+func (a *Agent) askUser(taskID, question string) (string, error) {
+	questionEntry, ok := a.lookupTopic(questionTopic)
+	if !ok || !questionEntry.Publishable {
+		return "", fmt.Errorf("%s is not currently publishable; ask action is unavailable", questionTopic)
+	}
+	if questionEntry.ResponseTopic == "" {
+		return "", fmt.Errorf("%s does not advertise a response_topic; ask action is unavailable", questionTopic)
+	}
+
+	questionID := newQuestionID(taskID)
+	conf := config.Get()
+
+	// Dial a separate RX connection for the response subscription
+	url := net.JoinHostPort(conf.Core.Host, strconv.Itoa(conf.Core.RxPort))
+	rxConn := topic.DialServer(url)
+	defer rxConn.Close()
+
+	responseMsg := &msgs.ExecuteResponse{}
+	topicType := firstNonEmpty(questionEntry.ResponseType, msgs.GetType(*responseMsg))
+
+	// Subscribe to the response topic
+	env := msgs.Envelope{
+		Cmd:       msgs.CmdSubscribe,
+		Topic:     questionEntry.ResponseTopic,
+		TopicType: topicType,
+	}
+	data, err := msgpack.Marshal(env)
+	if err != nil {
+		return "", fmt.Errorf("marshal subscribe: %w", err)
+	}
+	if _, err := rxConn.Write(data); err != nil {
+		return "", fmt.Errorf("send subscribe: %w", err)
+	}
+
+	// Publish the question
+	a.node.Publish(questionTopic, &msgs.ExecuteQuestion{
+		TaskID:     taskID,
+		QuestionID: questionID,
+		Question:   question,
+	})
+
+	// Wait for response with timeout
+	if err := rxConn.SetReadDeadline(time.Now().Add(responseWait)); err != nil {
+		return "", fmt.Errorf("set read deadline: %w", err)
+	}
+
+	for {
+		var respEnv msgs.Envelope
+		if err := msgpack.UnmarshalRead(rxConn, &respEnv); err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				return "", fmt.Errorf("timed out waiting for user response")
+			}
+			return "", fmt.Errorf("read response: %w", err)
+		}
+
+		switch respEnv.Cmd {
+		case msgs.RespOK:
+			continue // subscribe acknowledgment
+		case msgs.RespError:
+			return "", fmt.Errorf("server error: %s", respEnv.Err)
+		case msgs.RespMessage:
+			// decode the payload
+		default:
+			continue
+		}
+
+		if err := msgpack.Unmarshal(respEnv.Payload, responseMsg); err != nil {
+			return "", fmt.Errorf("unmarshal response: %w", err)
+		}
+
+		if !matchesResponse(taskID, questionID, responseMsg) {
+			continue
+		}
+
+		return responseMsg.Response, nil
+	}
+}
+
+func (a *Agent) publishAndWait(requestTopic string, payload interface{}, responseTopicName string, responseTopicType string, matchField string, matchValue string, timeout time.Duration) (interface{}, error) {
+	conf := config.Get()
+	url := net.JoinHostPort(conf.Core.Host, strconv.Itoa(conf.Core.RxPort))
+	rxConn, err := net.Dial("tcp", url)
+	if err != nil {
+		return nil, fmt.Errorf("dial response topic server: %w", err)
+	}
+	defer rxConn.Close()
+
+	env := msgs.Envelope{
+		Cmd:       msgs.CmdSubscribe,
+		Topic:     responseTopicName,
+		TopicType: responseTopicType,
+	}
+	data, err := msgpack.Marshal(env)
+	if err != nil {
+		return nil, fmt.Errorf("marshal subscribe: %w", err)
+	}
+	if _, err := rxConn.Write(data); err != nil {
+		return nil, fmt.Errorf("send subscribe: %w", err)
+	}
+
+	a.node.Publish(requestTopic, payload)
+
+	if err := rxConn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, fmt.Errorf("set read deadline: %w", err)
+	}
+
+	for {
+		var respEnv msgs.Envelope
+		if err := msgpack.UnmarshalRead(rxConn, &respEnv); err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				return nil, fmt.Errorf("timed out waiting for response on %s", responseTopicName)
+			}
+			return nil, fmt.Errorf("read response: %w", err)
+		}
+
+		switch respEnv.Cmd {
+		case msgs.RespOK:
+			continue
+		case msgs.RespError:
+			return nil, fmt.Errorf("server error: %s", respEnv.Err)
+		case msgs.RespMessage:
+		default:
+			continue
+		}
+
+		var responsePayload interface{}
+		if err := msgpack.Unmarshal(respEnv.Payload, &responsePayload); err != nil {
+			return nil, fmt.Errorf("unmarshal response payload: %w", err)
+		}
+
+		if !matchesGenericResponse(responsePayload, matchField, matchValue) {
+			continue
+		}
+
+		return responsePayload, nil
+	}
+}
+
+func matchesResponse(taskID, questionID string, response *msgs.ExecuteResponse) bool {
+	if response == nil {
+		return false
+	}
+	if response.QuestionID != "" {
+		return response.QuestionID == questionID
+	}
+	if taskID == "" {
+		return response.TaskID == ""
+	}
+	return response.TaskID == taskID
+}
+
+func matchesGenericResponse(responsePayload interface{}, matchField, matchValue string) bool {
+	if matchField == "" {
+		return true
+	}
+
+	responseMap, ok := responsePayload.(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	actualValue, ok := responseMap[matchField]
+	if !ok {
+		return false
+	}
+
+	return fmt.Sprint(actualValue) == matchValue
+}
+
+func newQuestionID(taskID string) string {
+	if taskID == "" {
+		return fmt.Sprintf("question-%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%s-%d", taskID, time.Now().UnixNano())
+}
+
+func (a *Agent) publishResult(taskID string, success bool, summary, output string) {
+	a.node.Publish(resultTopic, &msgs.ExecuteResult{
+		TaskID:  taskID,
+		Success: success,
+		Summary: summary,
+		Output:  output,
+	})
+
+	if a.memoryManager != nil {
+		_, _ = a.memoryManager.RecordTask(context.Background(), memory.TaskRecord{
+			TaskID:      taskID,
+			Description: getTaskDescription(a.activeTask),
+			Summary:     summary,
+			Output:      output,
+			Success:     success,
+			Tags:        []string{"llm_execute"},
+		})
+	}
+}
+
+func (a *Agent) lookupTopic(topicName string) (promptTopic, bool) {
+	for _, availableTopic := range a.topicCatalog {
+		if availableTopic.Name == topicName {
+			return availableTopic, true
+		}
+	}
+	return promptTopic{}, false
+}
+
+func decodeActionPayload(raw json.RawMessage) (interface{}, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("missing payload field")
+	}
+
+	var payload interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, fmt.Errorf("invalid payload JSON: %w", err)
+	}
+	return payload, nil
+}
+
+func formatPayloadForPrompt(payload interface{}) string {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Sprintf("%v", payload)
+	}
+	return string(data)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func formatCommandResult(stdout, stderr string, exitCode int) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Exit code: %d\n", exitCode))
+	if stdout != "" {
+		sb.WriteString(fmt.Sprintf("Stdout:\n%s\n", stdout))
+	}
+	if stderr != "" {
+		sb.WriteString(fmt.Sprintf("Stderr:\n%s\n", stderr))
+	}
+	if stdout == "" && stderr == "" {
+		sb.WriteString("(no output)\n")
+	}
+	return sb.String()
+}
+
+func getTaskDescription(task *msgs.ExecuteTask) string {
+	if task == nil {
+		return ""
+	}
+	return task.Description
+}

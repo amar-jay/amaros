@@ -6,9 +6,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/amar-jay/amaros/pkg/config"
 	"github.com/amar-jay/amaros/internal/model"
 	"github.com/amar-jay/amaros/internal/openrouter"
+	"github.com/amar-jay/amaros/pkg/config"
 	"github.com/amar-jay/amaros/pkg/msgs"
 	"github.com/amar-jay/amaros/pkg/node"
 	"github.com/amar-jay/amaros/pkg/topic"
@@ -98,7 +98,7 @@ func onRequest(ctx topic.CallbackContext) {
 		"model":             resp.Model,
 		"prompt_tokens":     resp.Usage.PromptTokens,
 		"completion_tokens": resp.Usage.CompletionTokens,
-	}).Info("LLM response: %s", resp.Content)
+	}).Infof("LLM response: %s", resp.Content)
 
 	llmNode.Publish(responseTopic, &msgs.LLMResponse{
 		Content:          resp.Content,
