@@ -1,6 +1,6 @@
 module github.com/amar-jay/amaros
 
-go 1.23.0
+go 1.24.11
 
 require (
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
@@ -13,6 +13,7 @@ require (
 )
 
 require (
+	github.com/amikos-tech/chroma-go v0.4.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
@@ -26,6 +27,6 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/sys v0.29.0 // indirect
-	golang.org/x/text v0.28.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/text v0.32.0 // indirect
 )
