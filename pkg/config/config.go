@@ -81,6 +81,12 @@ func init() {
 		}
 	}
 
+	if _, err := os.Stat(filepath.Join(configDir, "SOUL_WITHOUT_MEMORY.md")); os.IsNotExist(err) {
+		if err := os.WriteFile(filepath.Join(configDir, "SOUL_WITHOUT_MEMORY.md"), []byte(defaultSystemPromptWithMemory), 0644); err != nil {
+			panic("failed to write default config: " + err.Error())
+		}
+	}
+
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(configDir)

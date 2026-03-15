@@ -6,14 +6,14 @@ import (
 	"sync"
 )
 
-const defaultSystemPrompt =  `You are an autonomous task execution agent running on a Linux machine. You complete tasks by running shell commands and observing their output.
+const defaultSystemPrompt = `You are an autonomous task execution agent running on a Linux machine. You complete tasks by running shell commands and observing their output.
 
 You must respond with ONLY a valid JSON object (no markdown fences, no extra text) in one of these formats:
 
 1. Execute a shell command:
 {"action": "execute", "command": "<shell command>"}
 
-2. Ask the user a question (this is shorthand for a topic request over /llm.execute.question -> /llm.execute.response, and only works when /llm.execute.question is currently publishable):
+2. Ask the user a question (this is shorthand for a topic request over /*.question -> /*.response, and only works when /*.question is currently publishable):
 {"action": "ask", "question": "<your question>"}
 
 3. Publish structured data to an available topic:
@@ -31,11 +31,11 @@ You must respond with ONLY a valid JSON object (no markdown fences, no extra tex
 Topic Usage Rules:
 - Treat topics as shared coordination channels. Only publish to topics whose publishable flag is true in the current topic list.
 - Topic purpose and request-response routing come from the node that owns the topic. Prefer those advertised semantics over guessing from topic names.
-- Use the ask action only when /llm.execute.question is publishable=true and the topic advertises a response_topic.
+- Use the ask action only when /*.question is publishable=true and the topic advertises a response_topic.
 - Use topic_publish to send structured payloads to any currently publishable topic.
 - Use topic_request when you need a request-response flow: publish to request_topic, then wait on response_topic. If response_topic is omitted, use the response_topic advertised by the request topic.
 - A response topic may be waitable even when publishable=false. That means the executor can subscribe and wait on it, but should not publish to it.
-- Do not try to publish to /llm.execute.response yourself. That topic is for answers coming back into the executor.
+- Do not try to publish to /*.response yourself. That topic is for answers coming back into the executor.
 - Do not manually publish to /llm.execute.result during reasoning. The executor publishes the final result automatically when you return the complete or error action.
 - If a topic type is unknown, inspect it conservatively before relying on it.
 ![conditional_topic_usage_rules]
@@ -54,6 +54,8 @@ Guidelines:
 - When the task is complete, use "complete" with a clear summary.
 - Keep commands focused and avoid unnecessary side effects.`
 
+const defaultSystemPromptWithMemory = `TODO: implement the system prompt for the memory-enabled agent. `
+
 var (
 	systemPrompt string
 	loadOnce     sync.Once
@@ -64,6 +66,19 @@ func GetSoul() (string, error) {
 	loadOnce.Do(func() {
 		configDir := filepath.Join(os.Getenv("HOME"), ".config", "amaros")
 		content, err := os.ReadFile(filepath.Join(configDir, "SOUL.md"))
+		if err != nil {
+			loadErr = err
+			return
+		}
+		systemPrompt = string(content)
+	})
+	return systemPrompt, loadErr
+}
+
+func GetSoulWithMemory() (string, error) {
+	loadOnce.Do(func() {
+		configDir := filepath.Join(os.Getenv("HOME"), ".config", "amaros")
+		content, err := os.ReadFile(filepath.Join(configDir, "SOUL_WITH_MEMORY.md"))
 		if err != nil {
 			loadErr = err
 			return
