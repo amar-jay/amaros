@@ -14,6 +14,7 @@ type Config struct {
 	OpenRouter   OpenRouterConfig   `mapstructure:"openrouter"`
 	Registry     RegistryConfig     `mapstructure:"registry"`
 	Log          LogConfig          `mapstructure:"log"`
+	Memory       MemoryConfig       `mapstructure:"memory"`
 	Integrations IntegrationsConfig `mapstructure:"integrations"`
 }
 
@@ -36,6 +37,15 @@ type LogConfig struct {
 	Level string `mapstructure:"level"`
 }
 
+type MemoryConfig struct {
+	RootDir       string `mapstructure:"root_dir"`
+	MarkdownDir   string `mapstructure:"markdown_dir"`
+	VectorMode    string `mapstructure:"vector_mode"` // "persistent" or "http"
+	VectorURL     string `mapstructure:"vector_url"`
+	Collection    string `mapstructure:"collection"`
+	PersistentDir string `mapstructure:"persistent_path"`
+}
+
 type IntegrationsConfig map[string]interface{}
 
 var cfg *Config
@@ -54,6 +64,14 @@ registry:
 
 log:
   level: "info"
+
+memory:
+  root_dir: "~/.config/amaros/memory"
+  markdown_dir: "~/.config/amaros/memory/journal"
+  vector_mode: "persistent" # persistent | http
+  vector_url: "http://localhost:8000"
+  collection: "amaros_memory"
+  persistent_path: "~/.config/amaros/memory/vector"
 
 integrations:
 `
@@ -94,6 +112,12 @@ func init() {
 	viper.SetDefault("registry.path", filepath.Join(configDir)) // perhaps within a subdirectory if it gets complicated
 	viper.SetDefault("registry.api_url", "https://amaros.vercel.app")
 	viper.SetDefault("log.level", "info")
+	viper.SetDefault("memory.root_dir", filepath.Join(configDir, "memory"))
+	viper.SetDefault("memory.markdown_dir", filepath.Join(configDir, "memory", "journal"))
+	viper.SetDefault("memory.vector_mode", "persistent")
+	viper.SetDefault("memory.vector_url", "http://localhost:8000")
+	viper.SetDefault("memory.collection", "amaros_memory")
+	viper.SetDefault("memory.persistent_path", filepath.Join(configDir, "memory", "vector"))
 
 	// env overrides: AMAROS_CORE_TX_PORT, AMAROS_OPENROUTER_API_KEY, etc.
 	viper.SetEnvPrefix("AMAROS")
@@ -118,6 +142,33 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.Registry.Path = p
+	if cfg.Memory.RootDir == "" {
+		cfg.Memory.RootDir = filepath.Join(os.Getenv("HOME"), ".config", "amaros", "memory")
+	}
+	cfg.Memory.RootDir, err = expandPath(cfg.Memory.RootDir)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Memory.MarkdownDir == "" {
+		cfg.Memory.MarkdownDir = filepath.Join(cfg.Memory.RootDir, "journal")
+	}
+	cfg.Memory.MarkdownDir, err = expandPath(cfg.Memory.MarkdownDir)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Memory.PersistentDir == "" {
+		cfg.Memory.PersistentDir = filepath.Join(cfg.Memory.RootDir, "vector")
+	}
+	cfg.Memory.PersistentDir, err = expandPath(cfg.Memory.PersistentDir)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Memory.Collection == "" {
+		cfg.Memory.Collection = "amaros_memory"
+	}
+	if cfg.Memory.VectorMode == "" {
+		cfg.Memory.VectorMode = "persistent"
+	}
 	return cfg, nil
 }
 
