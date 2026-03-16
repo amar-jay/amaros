@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/amar-jay/amaros/internal/memory"
+	"github.com/amar-jay/amaros/pkg/config"
 )
 
 // ExampleTieredMemory demonstrates how hot/warm/cold memory tiers interact.
@@ -100,5 +101,15 @@ func PrintEntries(entries []*memory.Entry) {
 }
 
 func main() {
-	ExampleTieredMemory()
+	conf := config.Get()
+	tm, _ := memory.NewTieredMemory(conf.Memory.RootDir, conf.Memory.ColdDbPath)
+	defer tm.Close()
+
+	var tier = memory.Hot | memory.Warm | memory.Cold
+	entries, _ := tm.List("", tier)
+	for _, e := range entries {
+		fmt.Printf("key=%s tier=%d\n", e.Key, e.Tier)
+	}
+	// PrintEntries(entries)
+	// ExampleTieredMemory()
 }

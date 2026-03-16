@@ -263,7 +263,6 @@ func topicUsageRules(topics []promptTopic) string {
 func (a *Agent) Run(task *msgs.ExecuteTask) {
 	a.logger.WithFields(map[string]interface{}{
 		"task_id":     task.TaskID,
-		"description": task.Description,
 	}).Info("starting agentic loop")
 
 	a.addMessage(model.RoleUser, fmt.Sprintf("Task: %s", task.Description))

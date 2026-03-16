@@ -7,8 +7,8 @@ import (
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
 
-	"github.com/amar-jay/amaros/internal/model"
 	"github.com/amar-jay/amaros/internal/memory"
+	"github.com/amar-jay/amaros/internal/model"
 	"github.com/amar-jay/amaros/internal/openrouter"
 	"github.com/amar-jay/amaros/pkg/config"
 	"github.com/amar-jay/amaros/pkg/msgs"
@@ -21,10 +21,10 @@ const (
 	taskTopic     = "/llm.execute.task"
 	questionTopic = "/telegram.question"
 	resultTopic   = "/llm.execute.result"
-	maxIterations = 50
+	maxIterations = 500
 	cmdTimeout    = 30 * time.Second
-	llmTimeout    = 60 * time.Second
-	responseWait  = 120 * time.Second
+	llmTimeout    = 5 * time.Minute
+	responseWait  = 5 * time.Minute
 )
 
 var (
@@ -49,7 +49,7 @@ func init() {
 
 	// initialize memory
 	var err error
-	tm, err = memory.NewTieredMemory("~/memory", "")
+	tm, err = memory.NewTieredMemory(conf.Memory.RootDir, conf.Memory.ColdDbPath)
 	if err != nil {
 		log.Fatalf("failed to init memory: %v", err)
 	}

@@ -15,6 +15,12 @@ type Config struct {
 	Registry     RegistryConfig     `mapstructure:"registry"`
 	Log          LogConfig          `mapstructure:"log"`
 	Integrations IntegrationsConfig `mapstructure:"integrations"`
+	Memory       MemoryConfig       `mapstructure:"memory"`
+}
+
+type MemoryConfig struct {
+	RootDir string `mapstructure:"root_dir"`
+	ColdDbPath string `mapstructure:"cold_db_path"`
 }
 
 type CoreConfig struct {
@@ -45,6 +51,10 @@ const defaultConfig = `core:
   tx_port: 11311
   rx_port: 11312
 
+memory:
+	root_dir: "~/.amaros/memory/prefrontal"
+	cold_db_path: "~/.amaros/memory/cerebral.db"
+
 openrouter:
   api_key: ""
 
@@ -58,8 +68,9 @@ log:
 integrations:
 `
 
+var configDir = filepath.Join(os.Getenv("HOME"), ".config", "amaros")
+
 func init() {
-	configDir := filepath.Join(os.Getenv("HOME"), ".config", "amaros")
 	// check if config dir exist if not create it
 	if _, err := os.Stat(configDir); os.IsNotExist(err) {
 		if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -96,6 +107,8 @@ func init() {
 	viper.SetDefault("core.host", "0.0.0.0")
 	viper.SetDefault("core.tx_port", 11311)
 	viper.SetDefault("core.rx_port", 11312)
+	viper.SetDefault("memory.root_dir", filepath.Join(configDir, "memory", "prefrontal"))
+	viper.SetDefault("memory.cold_db_path", filepath.Join(configDir, "memory", "cerebral.db"))
 	viper.SetDefault("openrouter.api_key", "")
 	viper.SetDefault("registry.path", filepath.Join(configDir)) // perhaps within a subdirectory if it gets complicated
 	viper.SetDefault("registry.api_url", "https://amaros.vercel.app")

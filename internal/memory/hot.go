@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// TODO: add limit to hot store and auto-evict to warm store when exceeded
+
 // HotStore is an in-memory key-value store using a concurrent map.
 type HotStore struct {
 	mu   sync.RWMutex
