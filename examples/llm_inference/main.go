@@ -98,7 +98,7 @@ func onRequest(ctx topic.CallbackContext) {
 		"model":             resp.Model,
 		"prompt_tokens":     resp.Usage.PromptTokens,
 		"completion_tokens": resp.Usage.CompletionTokens,
-	}).Info("LLM response: %s", resp.Content)
+	}).Infof("LLM response: %s", resp.Content)
 
 	llmNode.Publish(responseTopic, &msgs.LLMResponse{
 		Content:          resp.Content,

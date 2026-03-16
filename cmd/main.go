@@ -509,6 +509,7 @@ func findTopicByName(topics []topic.Topic, name string) (topic.Topic, bool) {
 			return listedTopic, true
 		}
 	}
+
 	return topic.Topic{}, false
 }
 

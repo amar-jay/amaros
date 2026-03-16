@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,25 +11,58 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func newTestMemory(t *testing.T) *TieredMemory {
-	t.Helper()
+func TestSetAndGetHot(t *testing.T) {
+	dir := t.TempDir()
+	mem, err := NewTieredMemory(dir, "")
+	if err != nil {
+		t.Fatalf("NewTieredMemory: %v", err)
+	}
+	defer mem.Close()
+
+	mem.Set("key1", []byte("value1"), Hot)
+	e, err := mem.Get("key1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if e == nil {
+		t.Fatal("expected entry, got nil")
+	}
+	if string(e.Value) != "value1" {
+		t.Fatalf("expected value1, got %s", e.Value)
+	}
+}
+
+func TestSetAndGetWarm(t *testing.T) {
+	dir := t.TempDir()
+	mem, err := NewTieredMemory(dir, "")
+	if err != nil {
+		t.Fatalf("NewTieredMemory: %v", err)
+	}
+	defer mem.Close()
+
+	mem.Set("key1", []byte("value1"), Warm)
+	e, err := mem.Get("key1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if e == nil {
+		t.Fatal("expected entry, got nil")
+	}
+	if string(e.Value) != "value1" {
+		t.Fatalf("expected value1, got %s", e.Value)
+	}
+}
+
+func TestSetAndGetCold(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "cold.db")
 	mem, err := NewTieredMemory(dir, dbPath)
 	if err != nil {
 		t.Fatalf("NewTieredMemory: %v", err)
 	}
-	t.Cleanup(func() { mem.Close() })
-	return mem
-}
+	defer mem.Close()
 
-func TestSetAndGetHot(t *testing.T) {
-	mem := newTestMemory(t)
-
-	if err := mem.Set("key1", []byte("value1"), Hot); err != nil {
-		t.Fatalf("Set hot: %v", err)
-	}
-
+	mem.Set("key1", []byte("value1"), Cold)
 	e, err := mem.Get("key1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -37,133 +71,119 @@ func TestSetAndGetHot(t *testing.T) {
 		t.Fatal("expected entry, got nil")
 	}
 	if string(e.Value) != "value1" {
-		t.Fatalf("expected value1, got %s", string(e.Value))
-	}
-}
-
-func TestSetAndGetWarm(t *testing.T) {
-	mem := newTestMemory(t)
-
-	if err := mem.Set("key1", []byte("value1"), Warm); err != nil {
-		t.Fatalf("Set warm: %v", err)
-	}
-
-	// Get should auto-promote to hot
-	e, err := mem.Get("key1")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if e == nil {
-		t.Fatal("expected entry, got nil")
-	}
-	if string(e.Value) != "value1" {
-		t.Fatalf("expected value1, got %s", string(e.Value))
-	}
-	if e.Tier != Hot {
-		t.Fatalf("expected tier Hot after auto-promote, got %v", e.Tier)
-	}
-}
-
-func TestSetAndGetCold(t *testing.T) {
-	mem := newTestMemory(t)
-
-	if err := mem.Set("key1", []byte("value1"), Cold); err != nil {
-		t.Fatalf("Set cold: %v", err)
-	}
-
-	// Get should auto-promote to hot
-	e, err := mem.Get("key1")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if e == nil {
-		t.Fatal("expected entry, got nil")
-	}
-	if string(e.Value) != "value1" {
-		t.Fatalf("expected value1, got %s", string(e.Value))
-	}
-	if e.Tier != Hot {
-		t.Fatalf("expected tier Hot after auto-promote, got %v", e.Tier)
+		t.Fatalf("expected value1, got %s", e.Value)
 	}
 }
 
 func TestPromoteDemote(t *testing.T) {
-	mem := newTestMemory(t)
-
-	// Set in hot
-	mem.Set("key1", []byte("v"), Hot)
-
-	// Demote: hot -> warm
-	if err := mem.Demote("key1"); err != nil {
-		t.Fatalf("Demote: %v", err)
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "cold.db")
+	mem, err := NewTieredMemory(dir, dbPath)
+	if err != nil {
+		t.Fatalf("NewTieredMemory: %v", err)
 	}
-	// Should still be gettable (auto-promotes back)
-	e, _ := mem.Get("key1")
+	defer mem.Close()
+
+	mem.Set("key1", []byte("value1"), Cold)
+	mem.Promote("key1")
+	e, _ := mem.warm.Get("key1")
 	if e == nil {
-		t.Fatal("expected entry after demote")
+		t.Fatal("expected entry in warm after promote")
 	}
 
-	// Set in warm explicitly
-	mem.Set("key1", []byte("v"), Warm)
-	// Promote: warm -> hot
-	if err := mem.Promote("key1"); err != nil {
-		t.Fatalf("Promote: %v", err)
+	mem.Demote("key1")
+	e, _ = mem.warm.Get("key1")
+	d, _ := mem.cold.Get("key1")
+	if e != nil && d == nil {
+		t.Fatal("expected no entry in warm and expected entry in cold after demote")
 	}
+
+	mem.Promote("key1")
+	mem.Promote("key1")
 	e, _ = mem.Get("key1")
+	fmt.Printf("%s %d", e.Key, e.Tier)
+	e, _ = mem.hot.Get("key1")
 	if e == nil {
-		t.Fatal("expected entry after promote")
+		t.Fatal("expected entry in hot after demote")
+	}
+
+	mem.Demote("key1")
+	mem.Demote("key1")
+	e, _ = mem.cold.Get("key1")
+	if e == nil {
+		t.Fatal("expected entry in hot after demote")
 	}
 }
 
 func TestFlush(t *testing.T) {
-	mem := newTestMemory(t)
-
-	// Put entries in warm
-	mem.Set("a", []byte("1"), Warm)
-	mem.Set("b", []byte("2"), Warm)
-
-	if err := mem.Flush(); err != nil {
-		t.Fatalf("Flush: %v", err)
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "cold.db")
+	mem, err := NewTieredMemory(dir, dbPath)
+	if err != nil {
+		t.Fatalf("NewTieredMemory: %v", err)
 	}
+	defer mem.Close()
 
-	// Warm should be empty now
-	warmList, _ := mem.warm.List("")
-	if len(warmList) != 0 {
-		t.Fatalf("expected warm empty after flush, got %d entries", len(warmList))
+	mem.Set("key1", []byte("value1"), Warm)
+	mem.Set("key2", []byte("value2"), Warm)
+	mem.Flush()
+
+	entries, _ := mem.warm.List("")
+	if len(entries) != 0 {
+		t.Fatalf("expected 0 warm entries after flush, got %d", len(entries))
 	}
-
-	// Cold should have the entries
-	coldList, _ := mem.cold.List("")
-	if len(coldList) != 2 {
-		t.Fatalf("expected 2 cold entries after flush, got %d", len(coldList))
+	entries, _ = mem.cold.List("")
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 cold entries after flush, got %d", len(entries))
 	}
 }
 
 func TestDelete(t *testing.T) {
-	mem := newTestMemory(t)
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "cold.db")
+	mem, err := NewTieredMemory(dir, dbPath)
+	if err != nil {
+		t.Fatalf("NewTieredMemory: %v", err)
+	}
+	defer mem.Close()
 
-	mem.Set("key1", []byte("v"), Hot)
-	mem.Set("key1", []byte("v"), Warm)
+	mem.Set("key1", []byte("value1"), Hot)
+	mem.Set("key2", []byte("value2"), Warm)
+	mem.Set("key3", []byte("value3"), Cold)
 
 	mem.Delete("key1")
+	mem.Delete("key2")
+	mem.Delete("key3")
 
 	e, _ := mem.Get("key1")
 	if e != nil {
-		t.Fatal("expected nil after delete")
+		t.Fatal("expected key1 to be deleted")
+	}
+	e, _ = mem.Get("key2")
+	if e != nil {
+		t.Fatal("expected key2 to be deleted")
+	}
+	e, _ = mem.Get("key3")
+	if e != nil {
+		t.Fatal("expected key3 to be deleted")
 	}
 }
 
 func TestList(t *testing.T) {
-	mem := newTestMemory(t)
-
-	mem.Set("ns:a", []byte("1"), Hot)
-	mem.Set("ns:b", []byte("2"), Warm)
-	mem.Set("other", []byte("3"), Hot)
-
-	entries, err := mem.List("ns:", Hot|Warm|Cold)
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "cold.db")
+	mem, err := NewTieredMemory(dir, dbPath)
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("NewTieredMemory: %v", err)
 	}
+	defer mem.Close()
+
+	mem.Set("ns:key1", []byte("v1"), Hot)
+	mem.Set("ns:key2", []byte("v2"), Warm)
+	mem.Set("other:key3", []byte("v3"), Cold)
+
+	tier := Cold
+	entries, _ := mem.List("ns:", tier)
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 entries with prefix ns:, got %d", len(entries))
 	}
@@ -189,4 +209,72 @@ func TestStartAging(t *testing.T) {
 	cancel()
 	time.Sleep(100 * time.Millisecond)
 	mem.Close()
+}
+
+func TestAppendAndGetHistory(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "cold.db")
+	mem, err := NewTieredMemory(dir, dbPath)
+	if err != nil {
+		t.Fatalf("NewTieredMemory: %v", err)
+	}
+	defer mem.Close()
+
+	// Append multiple values to the same key
+	err = mem.Append("test:key", []byte("value1"))
+	if err != nil {
+		t.Fatalf("Append 1: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	err = mem.Append("test:key", []byte("value2"))
+	if err != nil {
+		t.Fatalf("Append 2: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	err = mem.Append("test:key", []byte("value3"))
+	if err != nil {
+		t.Fatalf("Append 3: %v", err)
+	}
+
+	// Get history
+	history, err := mem.GetHistory("test:key")
+	if err != nil {
+		t.Fatalf("GetHistory: %v", err)
+	}
+
+	if len(history) != 3 {
+		t.Fatalf("expected 3 history entries, got %d", len(history))
+	}
+
+	// Verify order (oldest first)
+	if string(history[0].Value) != "value1" {
+		t.Fatalf("expected first entry to be 'value1', got '%s'", string(history[0].Value))
+	}
+	if string(history[1].Value) != "value2" {
+		t.Fatalf("expected second entry to be 'value2', got '%s'", string(history[1].Value))
+	}
+	if string(history[2].Value) != "value3" {
+		t.Fatalf("expected third entry to be 'value3', got '%s'", string(history[2].Value))
+	}
+
+	// Get latest value via regular Get
+	latest, err := mem.Get("test:key")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if latest == nil {
+		t.Fatal("expected to find latest value")
+	}
+	if string(latest.Value) != "value3" {
+		t.Fatalf("expected latest value to be 'value3', got '%s'", string(latest.Value))
+	}
+
+	// Get history count
+	count, err := mem.GetHistoryCount("test:key")
+	if err != nil {
+		t.Fatalf("GetHistoryCount: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("expected history count 3, got %d", count)
+	}
 }

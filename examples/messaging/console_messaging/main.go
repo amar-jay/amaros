@@ -1,120 +1,228 @@
 package main
 
 import (
-	"bufio"
+	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
-	"time"
+	"syscall"
 
 	"github.com/amar-jay/amaros/pkg/msgs"
 	"github.com/amar-jay/amaros/pkg/node"
 	"github.com/amar-jay/amaros/pkg/topic"
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
-const (
-	requestTopic   = "/console.question"
-	responseTopic  = "/console.response"
-	requestTimeout = 60 * time.Second
-)
+type questionMsg msgs.ExecuteQuestion
 
-var (
-	llmNode  *node.Node
-	question = &msgs.ExecuteQuestion{}
-	result   = &msgs.ExecuteResult{}
-	reader   = bufio.NewReader(os.Stdin)
-)
+type resultMsg msgs.ExecuteResult
 
-func init() {
+type model struct {
+	node          *node.Node
+	requestTopic  string
+	responseTopic string
+	resultTopic   string
 
-	llmNode = node.Init("console_messaging")
-	llmNode.DescribeTopics([]msgs.TopicMetadata{
-		{
-			Topic:         requestTopic,
-			Type:          msgs.GetType(msgs.ExecuteQuestion{}),
-			Purpose:       "questions that require a human answer through the llm_question_answer node",
-			ResponseTopic: responseTopic,
-			ResponseType:  msgs.GetType(msgs.ExecuteResponse{}),
-		},
-		{
-			Topic:   responseTopic,
-			Type:    msgs.GetType(msgs.ExecuteResponse{}),
-			Purpose: "answers returned by the llm_question_answer node to previously asked questions",
-		},
-		{
-			Topic:   "/llm.execute.result",
-			Type:    msgs.GetType(msgs.ExecuteResult{}),
-			Purpose: "task results sent back to the requester",
-		},
-	})
-	llmNode.OnShutdown(func() {
-		fmt.Println("shutting down console_messaging node")
-	})
-}
+	input   textinput.Model
+	current *msgs.ExecuteQuestion
+	history []string
 
-func onRequest(ctx topic.CallbackContext) {
-	// Copy the current request to avoid sharing the global pointer with future callbacks.
-	req := *question
-	if req.Question == "" {
-		ctx.Logger.Warn("received empty question, skipping")
-		return
-	}
-
-	// respond to the question through CLI
-	ctx.Logger.WithFields(map[string]interface{}{
-		"task_id":     req.TaskID,
-		"question_id": req.QuestionID,
-		"question":    req.Question,
-	}).Info("Received question")
-	fmt.Printf("Question: %s\n", req.Question)
-
-	fmt.Print("Enter your answer: ")
-	answer, err := reader.ReadString('\n')
-	if err != nil {
-		ctx.Logger.WithFields(map[string]interface{}{
-			"error": err.Error(),
-		}).Error("failed to read answer")
-		return
-	}
-	answer = strings.TrimSpace(answer)
-	fmt.Println("Answered")
-
-	response := msgs.ExecuteResponse{
-		TaskID:     req.TaskID,
-		QuestionID: req.QuestionID,
-		Response:   answer,
-	}
-
-	llmNode.Publish(responseTopic, response)
-}
-
-func onResult(ctx topic.CallbackContext) {
-	res := *result
-
-	status := "Failed"
-	if res.Success {
-		status = "Success"
-	}
-
-	fmt.Printf("\n--- Task Result [%s] ---\nStatus: %s\nSummary: %s\n", res.TaskID, status, res.Summary)
-	if res.Output != "" {
-		fmt.Printf("Output:\n%s\n", res.Output)
-	}
-	fmt.Println("-----------------------")
+	questionCh chan msgs.ExecuteQuestion
+	resultCh   chan msgs.ExecuteResult
+	err        error
 }
 
 func main() {
-	fmt.Printf("console_messaging node started\n")
-	fmt.Printf("  subscribed to: %s\n", requestTopic)
-	fmt.Printf("  subscribed to: /llm.execute.result\n")
-	fmt.Printf("  publishing to: %s\n", responseTopic)
+	nodeName := flag.String("node-name", "console_messaging", "name of this node")
+	requestTopic := flag.String("request-topic", "/console.question", "topic to subscribe for incoming questions")
+	responseTopic := flag.String("response-topic", "/console.response", "topic to publish answers")
+	resultTopic := flag.String("result-topic", "/llm.execute.result", "topic to subscribe for execution results")
+	flag.Parse()
 
-	llmNode.Callback(onRequest)
-	llmNode.Subscribe(requestTopic, question)
+	// Initialize the node and reveal what we publish so others can discover it.
+	n := node.Init(*nodeName)
+	n.DescribeTopics([]msgs.TopicMetadata{
+		{
+			Topic:         *requestTopic,
+			Type:          msgs.GetType(msgs.ExecuteQuestion{}),
+			Purpose:       "questions that require a human answer through the llm_question_answer node",
+			ResponseTopic: *responseTopic,
+			ResponseType:  msgs.GetType(msgs.ExecuteResponse{}),
+		},
+		{
+			Topic:   *responseTopic,
+			Type:    msgs.GetType(msgs.ExecuteResponse{}),
+			Purpose: "answers returned by the llm_question_answer node to previously asked questions",
+		},
+	})
 
-	llmNode.Callback(onResult)
-	llmNode.Subscribe("/llm.execute.result", result)
+	// Setup clean shutdown on Ctrl+C.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sig
+		fmt.Println("\nshutting down console_messaging node")
+		os.Exit(0)
+	}()
 
-	// Keep the process running
-	select {}
+	// Channels used to forward messages into the TUI.
+	questionCh := make(chan msgs.ExecuteQuestion, 16)
+	resultCh := make(chan msgs.ExecuteResult, 16)
+
+	// Subscribe to incoming questions.
+	question := &msgs.ExecuteQuestion{}
+	go func() {
+		n.SubscribeWithCallback(*requestTopic, question, func(ctx topic.CallbackContext) {
+			req := *question // copy incoming message before it is reused.
+			if req.Question == "" {
+				ctx.Logger.Warn("received empty question, skipping")
+				return
+			}
+			questionCh <- req
+		})
+	}()
+
+	// Subscribe to execution results.
+	result := &msgs.ExecuteResult{}
+	go func() {
+		n.SubscribeWithCallback(*resultTopic, result, func(_ topic.CallbackContext) {
+			res := *result
+			resultCh <- res
+		})
+	}()
+
+	m := newModel(n, *requestTopic, *responseTopic, *resultTopic, questionCh, resultCh)
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	if err := p.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to start UI: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func newModel(n *node.Node, requestTopic, responseTopic, resultTopic string, questionCh chan msgs.ExecuteQuestion, resultCh chan msgs.ExecuteResult) model {
+	i := textinput.New()
+	i.Placeholder = "Type your answer and press Enter"
+	i.Focus()
+	i.CharLimit = 512
+	i.Width = 60
+
+	return model{
+		node:          n,
+		requestTopic:  requestTopic,
+		responseTopic: responseTopic,
+		resultTopic:   resultTopic,
+		input:         i,
+		questionCh:    questionCh,
+		resultCh:      resultCh,
+		history:       make([]string, 0, 16),
+	}
+}
+
+func (m model) Init() tea.Cmd {
+	return tea.Batch(waitForQuestion(m.questionCh), waitForResult(m.resultCh))
+}
+
+func waitForQuestion(ch chan msgs.ExecuteQuestion) tea.Cmd {
+	return func() tea.Msg {
+		q := <-ch
+		return questionMsg(q)
+	}
+}
+
+func waitForResult(ch chan msgs.ExecuteResult) tea.Cmd {
+	return func() tea.Msg {
+		r := <-ch
+		return resultMsg(r)
+	}
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case questionMsg:
+		r := msgs.ExecuteQuestion(msg)
+		m.current = &r
+		m.input.SetValue("")
+		m.input.Placeholder = "Type your answer and press Enter"
+		return m, nil
+
+	case resultMsg:
+		res := msgs.ExecuteResult(msg)
+		m.history = append([]string{formatResult(res)}, m.history...)
+		if len(m.history) > 20 {
+			m.history = m.history[:20]
+		}
+		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "esc":
+			return m, tea.Quit
+		case "enter":
+			if m.current != nil {
+				answer := strings.TrimSpace(m.input.Value())
+				if answer != "" {
+					resp := msgs.ExecuteResponse{
+						TaskID:     m.current.TaskID,
+						QuestionID: m.current.QuestionID,
+						Response:   answer,
+					}
+					m.node.Publish(m.responseTopic, resp)
+					m.history = append([]string{fmt.Sprintf("Q: %s\nA: %s", m.current.Question, answer)}, m.history...)
+					m.current = nil
+					m.input.SetValue("")
+				}
+			}
+			return m, nil
+		}
+	}
+
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+func (m model) View() string {
+	var b strings.Builder
+	b.WriteString("AMAROS Console Messaging\n")
+	b.WriteString(fmt.Sprintf("subscribe: %s   publish: %s   results: %s\n", m.requestTopic, m.responseTopic, m.resultTopic))
+	b.WriteString("────────────────────────────────────────────────────────────────\n")
+
+	if m.current != nil {
+		b.WriteString(fmt.Sprintf("Question: %s\n\n", m.current.Question))
+		b.WriteString(m.input.View())
+		b.WriteString("\n")
+	} else {
+		b.WriteString("Waiting for question... (Ctrl+C to quit)\n")
+	}
+
+	if len(m.history) > 0 {
+		b.WriteString("\nRecent activity:\n")
+		for i, entry := range m.history {
+			if i >= 5 {
+				break
+			}
+			b.WriteString(entry + "\n")
+			b.WriteString("────────────────────────────────────────\n")
+		}
+	}
+
+	if m.err != nil {
+		b.WriteString("\nERROR: " + m.err.Error() + "\n")
+	}
+
+	return b.String()
+}
+
+func formatResult(r msgs.ExecuteResult) string {
+	status := "FAILED"
+	if r.Success {
+		status = "SUCCESS"
+	}
+	out := fmt.Sprintf("Result [%s] %s: %s", r.TaskID, status, r.Summary)
+	if r.Output != "" {
+		out += "\n" + strings.TrimSpace(r.Output)
+	}
+	return out
 }

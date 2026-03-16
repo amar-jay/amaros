@@ -21,9 +21,9 @@ const (
 	taskTopic     = "/llm.execute.task"
 	questionTopic = "/telegram.question"
 	resultTopic   = "/llm.execute.result"
-	maxIterations = 500
+	maxIterations = 200
 	cmdTimeout    = 30 * time.Second
-	llmTimeout    = 5 * time.Minute
+	llmTimeout    = 2 * time.Minute
 	responseWait  = 5 * time.Minute
 )
 

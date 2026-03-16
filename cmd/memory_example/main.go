@@ -108,7 +108,7 @@ func main() {
 	var tier = memory.Hot | memory.Warm | memory.Cold
 	entries, _ := tm.List("", tier)
 	for _, e := range entries {
-		fmt.Printf("key=%s tier=%d\n", e.Key, e.Tier)
+		fmt.Printf("key=%s tier=%d | %s\n", e.Key, e.Tier)
 	}
 	// PrintEntries(entries)
 	// ExampleTieredMemory()

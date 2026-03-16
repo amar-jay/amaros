@@ -37,6 +37,7 @@ type AgentAction struct {
 	Output         string          `json:"output,omitempty"`
 	Key            string          `json:"key,omitempty"`
 	Value          string          `json:"value,omitempty"`
+	Tier           string          `json:"tier,omitempty"`
 }
 
 // Agent runs the agentic loop for task execution.
@@ -48,6 +49,8 @@ type Agent struct {
 	topicCatalog  []promptTopic
 	messages      []model.Message
 	memory        *memory.TieredMemory
+	retries       int // llm call retries, reset on successful call
+	maxRetries    int // max retries before giving up on a task
 }
 
 type promptTopic struct {
@@ -73,6 +76,8 @@ func NewAgent(p model.Provider, n *node.Node, t []topic.Topic, maxIter int, tm *
 		logger:        ilog.New(),
 		topicCatalog:  buildPromptTopics(t),
 		memory:        tm,
+		maxRetries:    3, //TODO: dont hardcode this
+		retries:       0,
 	}
 	a.setSystemPrompt()
 	return a
@@ -134,10 +139,30 @@ func buildPromptTopics(observedTopics []topic.Topic) []promptTopic {
 
 		if existing, ok := merged[observedTopic.Name]; ok {
 			merged[observedTopic.Name] = mergePromptTopic(existing, entry)
-			continue
+		} else {
+			merged[observedTopic.Name] = entry
 		}
 
-		merged[observedTopic.Name] = entry
+		if observedTopic.ResponseTopic != "" && observedTopic.ResponseTopic != observedTopic.Name {
+			if _, ok := merged[observedTopic.ResponseTopic]; !ok {
+				merged[observedTopic.ResponseTopic] = promptTopic{
+					Name:        observedTopic.ResponseTopic,
+					Type:        observedTopic.ResponseType,
+					Publishable: true,
+					Waitable:    true,
+					OwnerNode:   observedTopic.OwnerNode,
+					Purpose:     "response topic for " + observedTopic.Name,
+					Source:      "runtime",
+				}
+			} else {
+				existingResp := merged[observedTopic.ResponseTopic]
+				if existingResp.Type == "" || existingResp.Type == "unknown" {
+					existingResp.Type = observedTopic.ResponseType
+				}
+				existingResp.Publishable = true
+				merged[observedTopic.ResponseTopic] = existingResp
+			}
+		}
 	}
 
 	result := make([]promptTopic, 0, len(merged))
@@ -194,61 +219,57 @@ func mergePromptTopic(current, incoming promptTopic) promptTopic {
 
 func formatAvailableTopics(topics []promptTopic) string {
 	if len(topics) == 0 {
-		return "- No topics were discoverable at task start. Use /llm.execute.question when you need user input and expect answers on /llm.execute.response."
+		return "    - No topics were discoverable at task start. Use /llm.execute.question when you need user input and expect answers on /llm.execute.response."
 	}
 
 	var builder strings.Builder
-	for _, availableTopic := range topics {
+	for i, availableTopic := range topics {
 		topicType := availableTopic.Type
 		if topicType == "" {
 			topicType = "unknown"
 		}
 
-		builder.WriteString("- ")
+		builder.WriteString("    ")
 		builder.WriteString(availableTopic.Name)
-		builder.WriteString(" | type: ")
-		builder.WriteString(topicType)
-		builder.WriteString(" | publishable: ")
-		builder.WriteString(strconv.FormatBool(availableTopic.Publishable))
-		builder.WriteString(" | waitable: ")
-		builder.WriteString(strconv.FormatBool(availableTopic.Waitable))
-		builder.WriteString(" | subscribers: ")
-		builder.WriteString(strconv.Itoa(availableTopic.Subscribers))
+		builder.WriteString("\n")
 
-		if availableTopic.OwnerNode != "" {
-			builder.WriteString(" | owner: ")
-			builder.WriteString(availableTopic.OwnerNode)
+		pad := func(label string) string {
+			return fmt.Sprintf("      %-15s  ", label)
 		}
+
+		builder.WriteString(pad("type:"))
+		builder.WriteString(topicType)
+		builder.WriteString("\n")
+
+		builder.WriteString(pad("publishable:"))
+		builder.WriteString(strconv.FormatBool(availableTopic.Publishable))
+		builder.WriteString("\n")
 
 		if availableTopic.Purpose != "" {
-			builder.WriteString(" | purpose: ")
+			builder.WriteString(pad("purpose:"))
 			builder.WriteString(availableTopic.Purpose)
-		}
-
-		if availableTopic.RequestTopic != "" {
-			builder.WriteString(" | request_topic: ")
-			builder.WriteString(availableTopic.RequestTopic)
+			builder.WriteString("\n")
 		}
 
 		if availableTopic.ResponseTopic != "" {
-			builder.WriteString(" | response_topic: ")
+			builder.WriteString(pad("response_topic:"))
 			builder.WriteString(availableTopic.ResponseTopic)
-		}
-
-		if availableTopic.ResponseType != "" {
-			builder.WriteString(" | response_type: ")
-			builder.WriteString(availableTopic.ResponseType)
+			builder.WriteString("\n")
 		}
 
 		if availableTopic.Source != "" {
-			builder.WriteString(" | source: ")
+			builder.WriteString(pad("source:"))
 			builder.WriteString(availableTopic.Source)
+			builder.WriteString("\n")
 		}
 
-		builder.WriteString("\n")
+		// Add an empty line between topics
+		if i < len(topics)-1 {
+			builder.WriteString("\n")
+		}
 	}
 
-	return strings.TrimSpace(builder.String())
+	return strings.TrimRight(builder.String(), "\n")
 }
 
 func topicUsageRules(topics []promptTopic) string {
@@ -262,7 +283,7 @@ func topicUsageRules(topics []promptTopic) string {
 // Run executes the agentic loop for the given task.
 func (a *Agent) Run(task *msgs.ExecuteTask) {
 	a.logger.WithFields(map[string]interface{}{
-		"task_id":     task.TaskID,
+		"task_id": task.TaskID,
 	}).Info("starting agentic loop")
 
 	a.addMessage(model.RoleUser, fmt.Sprintf("Task: %s", task.Description))
@@ -275,12 +296,17 @@ func (a *Agent) Run(task *msgs.ExecuteTask) {
 		}
 
 		start := time.Now()
+	llm_call:
 		action, err := a.callLLM()
 		if err != nil {
 			// If parse error, ask the LLM to correct itself and continue
 			if strings.Contains(err.Error(), "failed to parse") {
 				a.addMessage(model.RoleUser, "Your previous response was not valid JSON. Respond with ONLY a JSON object with an 'action' field.")
 				continue
+			}
+			if strings.Contains(err.Error(), "context deadline exceeded") && a.retries < a.maxRetries {
+				a.retries += 1
+				goto llm_call
 			}
 
 			// Fatal LLM error
@@ -317,6 +343,7 @@ func (a *Agent) Run(task *msgs.ExecuteTask) {
 		case "ask":
 			a.logger.WithFields(map[string]interface{}{
 				"question": action.Question,
+				"timeout":  action.TimeoutSeconds,
 			}).Info("asking user a question")
 
 			response, err := a.askUser(task.TaskID, action.Question)
@@ -329,15 +356,22 @@ func (a *Agent) Run(task *msgs.ExecuteTask) {
 
 		case "topic_publish":
 			if action.Topic == resultTopic {
-				failed := strings.Contains("failed", action.Output)
-				msg := "Task completed successfully"
-				if failed {
-					msg = "Task failed"
+				p, _ := decodeActionPayload(action.Payload)
+				res, ok := p.(map[string]interface{})
+				if !ok {
+					a.publishResult(task.TaskID, false, "LLM provided invalid payload for result topic", "")
+					continue
 				}
+				var msg string = "success"
+				if success, ok := res["success"].(bool); ok && !success {
+					msg = "failure"
+				}
+
 				a.logger.WithFields(map[string]interface{}{
-					"summary": action.Summary,
-				}).Info(msg)
-				a.publishResult(task.TaskID, failed, action.Summary, action.Output)
+					"summary": res["summary"].(string),
+					"task_id": task.TaskID,
+				}).Info("Task completed with " + msg)
+				a.publishResult(task.TaskID, res["success"].(bool), res["summary"].(string), res["output"].(string))
 				return
 			}
 			result, err := a.publishToTopic(action)
@@ -359,10 +393,19 @@ func (a *Agent) Run(task *msgs.ExecuteTask) {
 			a.logger.WithFields(map[string]interface{}{
 				"key":   action.Key,
 				"value": action.Value,
+				"tier":  action.Tier,
 			}).Info("storing in memory")
 
 			if a.memory != nil {
-				err := a.memory.Set(action.Key, []byte(action.Value), memory.Warm)
+				tier := memory.Hot // default to Hot
+				switch strings.ToLower(action.Tier) {
+				case "warm":
+					tier = memory.Warm
+				case "cold":
+					tier = memory.Cold
+				}
+
+				err := a.memory.Set(action.Key, []byte(action.Value), tier)
 				if err != nil {
 					a.addMessage(model.RoleUser, fmt.Sprintf("Failed to store memory: %v", err))
 				} else {
@@ -477,6 +520,7 @@ func (a *Agent) callLLM() (*AgentAction, error) {
 		return nil, fmt.Errorf("failed to parse LLM response: %w (raw: %s)", err, resp.Content)
 	}
 
+	a.retries = 0
 	return action, nil
 }
 
@@ -543,7 +587,7 @@ func (a *Agent) publishToTopic(action *AgentAction) (string, error) {
 	}
 
 	a.node.Publish(action.Topic, payload)
-	
+
 	// Issue a warning if the LLM provided a response_topic for a one-way publish action
 	if action.ResponseTopic != "" {
 		return fmt.Sprintf("Published payload to %s: %s (Warning: response_topic ignored. For request/response flows, use topic_request action instead)", action.Topic, formatPayloadForPrompt(payload)), nil

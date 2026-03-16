@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -65,24 +66,19 @@ func NewTieredMemory(dataDir string, coldDBPath string) (*TieredMemory, error) {
 }
 
 // Get looks up a key across tiers: hot → warm → cold.
-// Entries found in lower tiers are auto-promoted to hot for fast subsequent access.
 func (t *TieredMemory) Get(key string) (*Entry, error) {
 	if e, err := t.hot.Get(key); err == nil && e != nil {
 		return e, nil
 	}
 	if e, err := t.warm.Get(key); err == nil && e != nil {
-		// Auto-promote warm → hot
-		t.hot.Set(key, e.Value)
-		t.warm.Delete(key)
-		e.Tier = Hot
+		// Feature not needed: Auto-promote warm → hot
 		return e, nil
 	}
 	if t.cold != nil {
 		if e, err := t.cold.Get(key); err == nil && e != nil {
-			// Auto-promote cold → hot
-			t.hot.Set(key, e.Value)
-			t.cold.Delete(key)
-			e.Tier = Hot
+			// Auto-promote cold → hot (keep cold history)
+			// t.hot.Set(key, e.Value)
+			// e.Tier = Hot
 			return e, nil
 		}
 	}
@@ -113,7 +109,7 @@ func (t *TieredMemory) Promote(key string) error {
 			if err := t.warm.Set(key, e.Value); err != nil {
 				return err
 			}
-			return t.cold.Delete(key)
+			//return nil
 		}
 	}
 	// Try warm → hot
@@ -121,7 +117,16 @@ func (t *TieredMemory) Promote(key string) error {
 		if err := t.hot.Set(key, e.Value); err != nil {
 			return err
 		}
-		return t.warm.Delete(key)
+		//return nil
+	}
+
+	// Try cold → hot (keep cold history) may be needed for some use cases
+	if t.cold != nil {
+		if e, err := t.cold.Get(key); err == nil && e != nil {
+			if err := t.hot.Set(key, e.Value); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -171,124 +176,166 @@ func (t *TieredMemory) Flush() error {
 // hot is the most shallow search, cold is the deepest. tier parameter determines the depth of the search
 // if prefix is empty, all entries are returned.
 func (t *TieredMemory) List(prefix string, tier Tier) ([]*Entry, error) {
-	seen := make(map[string]*Entry)
 	var entries []*Entry
-	var err error
+	seen := make(map[string]bool)
 
-	if (tier&Cold) != 0 && t.cold != nil {
-		entries, err = t.cold.List(prefix)
+	// Collect from hot first (highest priority)
+	if tier >= Hot {
+		hotEntries, err := t.hot.List(prefix)
 		if err != nil {
 			return nil, err
 		}
-		for _, e := range entries {
-			seen[e.Key] = e
-		}
-	}
-	if (tier&Warm) != 0 && t.warm != nil {
-		// Warm overrides cold
-		entries, err = t.warm.List(prefix)
-		if err != nil {
-			return nil, err
-		}
-		for _, e := range entries {
-			seen[e.Key] = e
-		}
-	}
-	if (tier & Hot) != 0 {
-		// Hot overrides everything
-		entries, err = t.hot.List(prefix)
-		if err != nil {
-			return nil, err
-		}
-		for _, e := range entries {
-			seen[e.Key] = e
-		}
-	}
-
-	result := make([]*Entry, 0, len(seen))
-	for _, e := range seen {
-		result = append(result, e)
-	}
-	return result, nil
-}
-
-// Delete removes a key from all tiers.
-func (t *TieredMemory) Delete(key string) error {
-	t.hot.Delete(key)
-	t.warm.Delete(key)
-	if t.cold != nil {
-		t.cold.Delete(key)
-	}
-	return nil
-}
-
-// StartAging runs a background goroutine that demotes inactive entries.
-// hotTTL: entries in hot with no updates beyond this duration are demoted to warm.
-// warmTTL: entries in warm with no updates beyond this duration are demoted to cold.
-func (t *TieredMemory) StartAging(ctx context.Context, hotTTL, warmTTL time.Duration) {
-	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				// On shutdown, flush warm to cold
-				if err := t.Flush(); err != nil {
-					t.logger.WithError(err).Error("failed to flush on shutdown")
-				}
-				return
-			case <-ticker.C:
-				t.ageEntries(hotTTL, warmTTL)
-			}
-		}
-	}()
-}
-
-func (t *TieredMemory) ageEntries(hotTTL, warmTTL time.Duration) {
-	now := time.Now()
-
-	// Demote stale hot entries to warm
-	hotEntries, err := t.hot.List("")
-	if err != nil {
-		return
-	}
-	for _, e := range hotEntries {
-		if now.Sub(e.UpdatedAt) > hotTTL {
-			if err := t.Demote(e.Key); err != nil {
-				t.logger.WithError(err).WithField("key", e.Key).Warn("failed to demote hot entry")
-			} else {
-				t.logger.WithField("key", e.Key).Debug("demoted hot → warm")
+		for _, e := range hotEntries {
+			if !seen[e.Key] {
+				entries = append(entries, e)
+				seen[e.Key] = true
 			}
 		}
 	}
 
-	// Demote stale warm entries to cold
+	// Then warm
+	if tier >= Warm {
+		warmEntries, err := t.warm.List(prefix)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range warmEntries {
+			if !seen[e.Key] {
+				entries = append(entries, e)
+				seen[e.Key] = true
+			}
+		}
+	}
+
+	// Finally cold
+	if tier >= Cold && t.cold != nil {
+		coldEntries, err := t.cold.List(prefix)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range coldEntries {
+			if !seen[e.Key] {
+				entries = append(entries, e)
+				seen[e.Key] = true
+			}
+		}
+	}
+
+	return entries, nil
+}
+
+// Append adds a new entry to cold memory history without overwriting.
+// This preserves all historical values for a key.
+func (t *TieredMemory) Append(key string, value []byte) error {
 	if t.cold == nil {
-		return
+		return fmt.Errorf("cold store not available")
 	}
-	warmEntries, err := t.warm.List("")
-	if err != nil {
-		return
-	}
-	for _, e := range warmEntries {
-		if now.Sub(e.UpdatedAt) > warmTTL {
-			if err := t.cold.Set(e.Key, e.Value); err != nil {
-				t.logger.WithError(err).WithField("key", e.Key).Warn("failed to demote warm entry")
-				continue
-			}
-			t.warm.Delete(e.Key)
-			t.logger.WithField("key", e.Key).Debug("demoted warm → cold")
-		}
-	}
+	return t.cold.Append(key, value)
 }
 
-// Close shuts down all tiers.
+// GetHistory returns all historical entries for a key from cold storage.
+func (t *TieredMemory) GetHistory(key string) ([]*Entry, error) {
+	if t.cold == nil {
+		return nil, fmt.Errorf("cold store not available")
+	}
+	return t.cold.GetHistory(key)
+}
+
+// GetHistoryCount returns the number of historical entries for a key.
+func (t *TieredMemory) GetHistoryCount(key string) (int, error) {
+	if t.cold == nil {
+		return 0, fmt.Errorf("cold store not available")
+	}
+	return t.cold.GetHistoryCount(key)
+}
+
+// Close closes all stores.
 func (t *TieredMemory) Close() error {
-	t.hot.Close()
-	t.warm.Close()
 	if t.cold != nil {
 		t.cold.Close()
 	}
+	t.warm.Close()
+	t.hot.Close()
 	return nil
+}
+
+// Watch is a placeholder for future implementation.
+func (t *TieredMemory) Watch(ctx context.Context, key string) (<-chan *Entry, error) {
+	// TODO: implement watch functionality
+	return nil, fmt.Errorf("watch not implemented")
+}
+
+func (t *TieredMemory) Delete(key string) error {
+	err := t.hot.Delete(key)
+	if err != nil {
+		return err
+	}
+	err = t.warm.Delete(key)
+	if err != nil {
+		return err
+	}
+	if t.cold != nil {
+		err = t.cold.Delete(key)
+	}
+	return err
+}
+
+// StartAging starts background goroutines that age entries from hot→warm→cold.
+// hotTTL is how long entries stay in hot before demoting to warm.
+// warmTTL is how long entries stay in warm before demoting to cold.
+func (t *TieredMemory) StartAging(ctx context.Context, hotTTL, warmTTL time.Duration) {
+	go func() {
+		ticker := time.NewTicker(hotTTL)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Demote old hot entries to warm
+				entries, err := t.hot.List("")
+				if err != nil {
+					t.logger.WithError(err).Error("failed to list hot entries")
+					continue
+				}
+				now := time.Now()
+				for _, e := range entries {
+					if now.Sub(e.UpdatedAt) > hotTTL {
+						if err := t.Demote(e.Key); err != nil {
+							t.logger.WithError(err).WithField("key", e.Key).Error("failed to demote hot entry")
+						}
+					}
+				}
+			}
+		}
+	}()
+
+	go func() {
+		ticker := time.NewTicker(warmTTL)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Demote old warm entries to cold
+				if t.cold == nil {
+					continue
+				}
+				entries, err := t.warm.List("")
+				if err != nil {
+					t.logger.WithError(err).Error("failed to list warm entries")
+					continue
+				}
+				now := time.Now()
+				for _, e := range entries {
+					if now.Sub(e.UpdatedAt) > warmTTL {
+						if err := t.Demote(e.Key); err != nil {
+							t.logger.WithError(err).WithField("key", e.Key).Error("failed to demote warm entry")
+						}
+					}
+				}
+			}
+		}
+	}()
 }
