@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -45,21 +46,24 @@ type TieredMemory struct {
 
 // NewTieredMemory creates a tiered memory system.
 // coldDBPath can be empty if this node doesn't own the cold tier (non-registry nodes).
-func NewTieredMemory(dataDir string, coldDBPath string) (*TieredMemory, error) {
-	hot := NewHotStore()
-
-	warm, err := NewWarmStore(dataDir)
+func NewTieredMemory(dataDir string) (*TieredMemory, error) {
+	hot, err := NewHotStore(dataDir)
 	if err != nil {
 		return nil, err
 	}
 
+	warm, err := NewWarmStore(dataDir)
+	if err != nil {
+		hot.Close()
+		return nil, err
+	}
+
 	var cold *ColdStore
-	if coldDBPath != "" {
-		cold, err = NewColdStore(coldDBPath)
-		if err != nil {
-			warm.Close()
-			return nil, err
-		}
+	cold, err = NewColdStore(filepath.Join(dataDir, "cold.db"))
+	if err != nil {
+		hot.Close()
+		warm.Close()
+		return nil, err
 	}
 
 	return &TieredMemory{hot: hot, warm: warm, cold: cold, logger: logrus.New()}, nil

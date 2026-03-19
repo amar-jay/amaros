@@ -1,8 +1,7 @@
 package main
 
-// a demo on how memory works
-
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,105 +11,131 @@ import (
 	"github.com/amar-jay/amaros/pkg/config"
 )
 
-// ExampleTieredMemory demonstrates how hot/warm/cold memory tiers interact.
-//
-// - Hot is in-memory and fastest.
-// - Warm is append-only JSON log files.
-// - Cold is an SQLite-backed archive.
-func ExampleTieredMemory() {
-	// Use a temp directory so this example is safe to run repeatedly.
-	dataDir, _ := os.MkdirTemp("", "amaros-memory-example")
-	// defer os.RemoveAll(dataDir)
-
-	coldDB := filepath.Join(dataDir, "cold.db")
-	tm, _ := memory.NewTieredMemory(dataDir, coldDB)
-	defer tm.Close()
-
-	var tier = memory.Hot | memory.Warm | memory.Cold
-	// Write to hot
-	tm.Set("example:key", []byte("HELLO WORLD"), memory.Hot)
-	tm.Set("example:hot", []byte("hello hot world"), memory.Hot)
-	tm.Set("example:warm", []byte("hello warm world"), memory.Warm)
-	tm.Set("example:cold", []byte("hello cold world"), memory.Cold)
-
-	// Read it back (hot hit)
-	e, _ := tm.Get("example:key")
-	entries, _ := tm.List("", tier)
-	PrintEntries(entries)
-	time.Sleep(3 * time.Second)
-
-	// Demote to warm (hot -> warm)
-	tm.Demote("example:key")
-	entries, _ = tm.List("", tier)
-	PrintEntries(entries)
-
-	time.Sleep(3 * time.Second)
-	e, _ = tm.Get("example:key")
-	fmt.Printf("promoted back to hot: %s (tier=%d)\n", string(e.Value), e.Tier)
-	entries, _ = tm.List("", tier)
-	PrintEntries(entries)
-
-	// Flush warm -> cold (archive)
-	tm.Demote("example:key")
-	tm.Demote("example:key")
-	entries, _ = tm.List("", tier)
-	PrintEntries(entries)
-
-	tm.Promote("example:key")
-	entries, _ = tm.List("", tier)
-	PrintEntries(entries)
-
-	tm.Flush()
-	entries, _ = tm.List("", tier)
-	PrintEntries(entries)
-
-	e, _ = tm.Get("example:key")
-	fmt.Printf("archived & promoted: %s (tier=%d)\n", string(e.Value), e.Tier)
-
-	entries, _ = tm.List("", tier)
-	PrintEntries(entries)
-	// fmt.Println("all list entries count:", len(entries))
-
-	// Delete across all tiers
-	tm.Delete("example:key")
-	entries, _ = tm.List("", tier)
-	PrintEntries(entries)
-}
-
+// ANSI Color Codes
 const (
-	colorReset = "\x1b[0m"
-	colorHot   = "\x1b[31m"       // red
-	colorWarm  = "\x1b[38;5;208m" // orange (256-color)
-	colorCold  = "\x1b[36m"       // cyan
+	Reset  = "\033[0m"
+	Red    = "\033[31m"
+	Green  = "\033[32m"
+	Yellow = "\033[33m"
+	Cyan   = "\033[36m"
+	Gray   = "\033[90m"
 )
 
-func PrintEntries(entries []*memory.Entry) {
-	for _, e := range entries {
-		var color string
-		switch e.Tier {
-		case memory.Hot:
-			color = colorHot
-		case memory.Warm:
-			color = colorWarm
-		case memory.Cold:
-			color = colorCold
-		}
-		fmt.Printf("%s|%s%s\t", color, string(e.Value), colorReset)
-	}
-	fmt.Println("list count:", len(entries))
+var seeds = []struct {
+	key   string
+	value string
+}{
+	{"technical debt: oauth2 token refresh logic in auth middleware uses deprecated library", "priority=low;ref=JIRA-402"},
+	{"bug report: oauth2 token refresh fails when system clock drifts by 5 minutes", "severity=critical;fix=use_ntp_sync"},
+	{"architecture decision: oauth2 token storage moved from redis to postgres", "author=lead_dev;reason=consistency"},
+	{"compliance requirement: log all middleware request headers except Authorization", "legal=strict;pii=true"},
+	{"performance bottleneck: middleware logging creates high disk I/O", "fix=async_logging;sampling=10%"},
 }
 
 func main() {
 	conf := config.Get()
-	tm, _ := memory.NewTieredMemory(conf.Memory.RootDir, conf.Memory.ColdDbPath)
-	defer tm.Close()
-
-	var tier = memory.Hot | memory.Warm | memory.Cold
-	entries, _ := tm.List("", tier)
-	for _, e := range entries {
-		fmt.Printf("key=%s tier=%d\n", e.Key, e.Tier)
-		fmt.Printf("value=%s\n", string(e.Value))
+	if conf == nil {
+		fatal(errors.New("config was not loaded"))
 	}
-	// PrintEntries(entries)
-	// ExampleTieredMemory()
+
+	baseDir := filepath.Join(conf.Memory.RootDir, "examples", "complex_agent_memory")
+	os.RemoveAll(baseDir)
+	os.MkdirAll(baseDir, 0o750)
+
+	fmt.Printf("%s=== High-Precision Semantic Retrieval Console ===%s\n", Cyan, Reset)
+
+	if err := runHotExample(baseDir); err != nil {
+		fatal(err)
+	}
+}
+
+func runHotExample(baseDir string) error {
+	hot, err := memory.NewHotStore(baseDir)
+	if err != nil {
+		return err
+	}
+	defer hot.Close()
+
+	// 1. INGESTION
+	step("1) Ingesting high-overlap memories (Auth & Middleware)")
+	seeds := []struct {
+		key   string
+		value string
+	}{
+		{"technical debt: oauth2 token refresh logic in auth middleware uses deprecated library", "priority=low;ref=JIRA-402"},
+		{"bug report: oauth2 token refresh fails when system clock drifts by 5 minutes", "severity=critical;fix=use_ntp_sync"},
+		{"architecture decision: oauth2 token storage moved from redis to postgres", "author=lead_dev;reason=consistency"},
+		{"compliance requirement: log all middleware request headers except Authorization", "legal=strict;pii=true"},
+		{"performance bottleneck: middleware logging creates high disk I/O", "fix=async_logging;sampling=10%"},
+	}
+
+	for _, seed := range seeds {
+		if err := hot.Set(seed.key, []byte(seed.value)); err != nil {
+			return err
+		}
+		fmt.Printf("%s[Stored]%s %s\n", Gray, Reset, seed.key)
+	}
+
+	// 2. RETRIEVAL TESTS
+
+	step("2) Distinguishing BUG from DEBT")
+	q1 := "is there an active failure or error in the oauth2 refresh process?"
+	e1, _ := hot.Get(q1)
+	printMatch(q1, e1)
+
+	step("3) Legal vs Performance")
+	q2 := "gdpr rules and privacy restrictions for logging middleware"
+	e2, _ := hot.Get(q2)
+	printMatch(q2, e2)
+
+	step("4) Infrastructure History")
+	q3 := "migration of tokens from redis to database for reliability"
+	e3, _ := hot.Get(q3)
+	printMatch(q3, e3)
+
+	// 3. DELETION TEST
+	step("5) Deleting a memory and verifying it's gone")
+	delKey := seeds[0].key
+	if err := hot.Delete(delKey); err != nil {
+		return err
+	}
+	fmt.Printf("%s[Deleted]%s %s\n", Red, Reset, delKey)
+
+	e4, _ := hot.Get(delKey)
+	printMatch(delKey, e4)
+
+	time.Sleep(2 * time.Second) // Ensure timestamps differ for update test
+	// 4. UPDATING TEST
+	step("6) Updating an existing memory and verifying the update")
+	updateKey := seeds[1].key
+	newValue := "severity=critical;fix=use_ntp_sync;status=in_progress"
+	if err := hot.Set(updateKey, []byte(newValue)); err != nil {
+		return err
+	}
+	fmt.Printf("%s[Updated]%s %s\n", Green, Reset, updateKey)
+
+	e5, _ := hot.Get(updateKey)
+	printMatch(updateKey, e5)
+
+	return nil
+}
+
+func step(label string) {
+	fmt.Printf("\n%s--- %s ---%s\n", Cyan, label, Reset)
+}
+
+func printMatch(query string, e *memory.Entry) {
+	fmt.Printf("%s[Query]:%s  %s\n", Yellow, Reset, query)
+	if e == nil {
+		fmt.Printf("%s[Result]:%s %sNOT FOUND%s\n", Green, Reset, Red, Reset)
+		return
+	}
+	fmt.Printf("%s[Result]:%s %s%s%s\n", Green, Reset, Green, e.Key, Reset)
+	fmt.Printf("%s[Data]:%s   %s\n", Gray, Reset, string(e.Value))
+	fmt.Printf("%s[Metadata]:%s CreatedAt=%s UpdatedAt=%s\n", Gray, Reset, e.CreatedAt.Format(time.RFC3339), e.UpdatedAt.Format(time.RFC3339))
+}
+
+func fatal(err error) {
+	fmt.Fprintf(os.Stderr, "%sError: %v%s\n", Red, err, Reset)
+	os.Exit(1)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,7 +12,13 @@ import (
 
 func TestSetAndGetHot(t *testing.T) {
 	dir := t.TempDir()
-	mem, err := NewTieredMemory(dir, "")
+	os.MkdirAll(dir, 0o750)
+	if _, err := os.Stat(dir); err != nil || !os.IsNotExist(err) {
+		fmt.Printf("Does it exist? No: %s\n", dir)
+	}
+	fmt.Printf("Directory exists: %s\n", dir)
+
+	mem, err := NewTieredMemory(dir)
 	if err != nil {
 		t.Fatalf("NewTieredMemory: %v", err)
 	}
@@ -34,7 +39,8 @@ func TestSetAndGetHot(t *testing.T) {
 
 func TestSetAndGetWarm(t *testing.T) {
 	dir := t.TempDir()
-	mem, err := NewTieredMemory(dir, "")
+	os.MkdirAll(dir, 0o750)
+	mem, err := NewTieredMemory(dir)
 	if err != nil {
 		t.Fatalf("NewTieredMemory: %v", err)
 	}
@@ -55,8 +61,7 @@ func TestSetAndGetWarm(t *testing.T) {
 
 func TestSetAndGetCold(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "cold.db")
-	mem, err := NewTieredMemory(dir, dbPath)
+	mem, err := NewTieredMemory(dir)
 	if err != nil {
 		t.Fatalf("NewTieredMemory: %v", err)
 	}
@@ -77,8 +82,7 @@ func TestSetAndGetCold(t *testing.T) {
 
 func TestPromoteDemote(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "cold.db")
-	mem, err := NewTieredMemory(dir, dbPath)
+	mem, err := NewTieredMemory(dir)
 	if err != nil {
 		t.Fatalf("NewTieredMemory: %v", err)
 	}
@@ -117,8 +121,7 @@ func TestPromoteDemote(t *testing.T) {
 
 func TestFlush(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "cold.db")
-	mem, err := NewTieredMemory(dir, dbPath)
+	mem, err := NewTieredMemory(dir)
 	if err != nil {
 		t.Fatalf("NewTieredMemory: %v", err)
 	}
@@ -140,8 +143,7 @@ func TestFlush(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "cold.db")
-	mem, err := NewTieredMemory(dir, dbPath)
+	mem, err := NewTieredMemory(dir)
 	if err != nil {
 		t.Fatalf("NewTieredMemory: %v", err)
 	}
@@ -171,8 +173,7 @@ func TestDelete(t *testing.T) {
 
 func TestList(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "cold.db")
-	mem, err := NewTieredMemory(dir, dbPath)
+	mem, err := NewTieredMemory(dir)
 	if err != nil {
 		t.Fatalf("NewTieredMemory: %v", err)
 	}
@@ -192,8 +193,7 @@ func TestList(t *testing.T) {
 func TestStartAging(t *testing.T) {
 	// This is a smoke test — just verifies StartAging doesn't panic
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "cold.db")
-	mem, err := NewTieredMemory(dir, dbPath)
+	mem, err := NewTieredMemory(dir)
 	if err != nil {
 		t.Fatalf("NewTieredMemory: %v", err)
 	}
@@ -213,8 +213,7 @@ func TestStartAging(t *testing.T) {
 
 func TestAppendAndGetHistory(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "cold.db")
-	mem, err := NewTieredMemory(dir, dbPath)
+	mem, err := NewTieredMemory(dir)
 	if err != nil {
 		t.Fatalf("NewTieredMemory: %v", err)
 	}
@@ -280,9 +279,8 @@ func TestAppendAndGetHistory(t *testing.T) {
 }
 func TestDebugTieredAppend(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "cold.db")
 
-	mem, err := NewTieredMemory(dir, dbPath)
+	mem, err := NewTieredMemory(dir)
 	if err != nil {
 		t.Fatalf("NewTieredMemory: %v", err)
 	}

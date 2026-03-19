@@ -19,8 +19,8 @@ type Config struct {
 }
 
 type MemoryConfig struct {
-	RootDir    string `mapstructure:"root_dir"`
-	ColdDbPath string `mapstructure:"cold_db_path"`
+	RootDir string `mapstructure:"root_dir"`
+	// ColdDbPath string `mapstructure:"cold_db_path"`
 }
 
 type CoreConfig struct {
@@ -46,14 +46,14 @@ type IntegrationsConfig map[string]interface{}
 
 var cfg *Config
 
+// cold_db_path: "~/.amaros/memory/"
 const defaultConfig = `core:
   host: "0.0.0.0"
   tx_port: 11311
   rx_port: 11312
 
 memory:
-	root_dir: "~/.amaros/memory/prefrontal"
-	cold_db_path: "~/.amaros/memory/cerebral.db"
+	root_dir: "~/.amaros/memory/"
 
 openrouter:
   api_key: ""

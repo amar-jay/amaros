@@ -49,7 +49,7 @@ func init() {
 
 	// initialize memory
 	var err error
-	tm, err = memory.NewTieredMemory(conf.Memory.RootDir, conf.Memory.ColdDbPath)
+	tm, err = memory.NewTieredMemory(conf.Memory.RootDir)
 	if err != nil {
 		log.Fatalf("failed to init memory: %v", err)
 	}
