@@ -100,7 +100,7 @@ func (c *ColdStore) Set(key string, value []byte) error {
 // Append adds a new entry to history without overwriting the main store
 func (c *ColdStore) Append(key string, value []byte) error {
 	now := time.Now().UnixMilli()
-	
+
 	// Insert into history
 	_, err := c.db.Exec(`
 		INSERT INTO kv_history (key, value, created_at)

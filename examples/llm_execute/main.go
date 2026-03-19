@@ -8,7 +8,7 @@ import (
 	gonanoid "github.com/matoous/go-nanoid/v2"
 
 	"github.com/amar-jay/amaros/internal/model"
-	"github.com/amar-jay/amaros/internal/openrouter"
+	"github.com/amar-jay/amaros/internal/model/openrouter"
 	"github.com/amar-jay/amaros/pkg/config"
 	"github.com/amar-jay/amaros/pkg/msgs"
 	"github.com/amar-jay/amaros/pkg/node"
@@ -19,7 +19,6 @@ const (
 	defaultModel  = "openrouter/hunter-alpha"
 	taskTopic     = "/llm.execute.task"
 	questionTopic = "/telegram.question"
-	responseTopic = "/telegram.response"
 	resultTopic   = "/llm.execute.result"
 	maxIterations = 50
 	cmdTimeout    = 30 * time.Second
@@ -54,7 +53,7 @@ func init() {
 			Type:          msgs.GetType(msgs.ExecuteTask{}), //"{'task_id': string, 'description': string}",
 			Purpose:       "task that should be handled by agent",
 			ResponseTopic: resultTopic,
-			ResponseType:  "{'task_id': string, 'success': bool, 'summary': string, 'output': string}",
+			ResponseType:  msgs.GetType(msgs.ExecuteResult{}), //"{'task_id': string, 'question_id': string, 'response': string}",
 		},
 		{
 			Topic:   resultTopic,

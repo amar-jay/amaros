@@ -11,12 +11,12 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/amar-jay/amaros/internal/model"
+	. "github.com/amar-jay/amaros/internal/model"
 )
 
 const baseURL = "https://openrouter.ai/api/v1/chat/completions"
 
-// Client implements model.Provider for the OpenRouter API.
+// Client implements Provider for the OpenRouter API.
 type Client struct {
 	apiKey     string
 	httpClient *http.Client
@@ -36,26 +36,26 @@ func (c *Client) Name() string {
 
 // openrouter request/response shapes
 type orRequest struct {
-	Model       string          `json:"model"`
-	Messages    []model.Message `json:"messages"` // custom JSON via Message.MarshalJSON
-	MaxTokens   int             `json:"max_tokens,omitempty"`
-	Temperature float64         `json:"temperature,omitempty"`
-	Stream      bool            `json:"stream,omitempty"`
+	Model       string    `json:"model"`
+	Messages    []Message `json:"messages"` // custom JSON via Message.MarshalJSON
+	MaxTokens   int       `json:"max_tokens,omitempty"`
+	Temperature float64   `json:"temperature,omitempty"`
+	Stream      bool      `json:"stream,omitempty"`
 }
 
 type orResponse struct {
-	ID      string      `json:"id"`
-	Model   string      `json:"model"`
-	Choices []orChoice  `json:"choices"`
-	Usage   model.Usage `json:"usage"`
+	ID      string     `json:"id"`
+	Model   string     `json:"model"`
+	Choices []orChoice `json:"choices"`
+	Usage   Usage      `json:"usage"`
 }
 
 type orChoice struct {
-	Message model.Message `json:"message"`
+	Message Message `json:"message"`
 }
 
 // Complete sends a completion request to OpenRouter and returns the response.
-func (c *Client) Complete(ctx context.Context, req model.CompletionRequest) (*model.CompletionResponse, error) {
+func (c *Client) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	body, err := json.Marshal(orRequest{
 		Model:       req.Model,
 		Messages:    req.Messages,
@@ -99,7 +99,7 @@ func (c *Client) Complete(ctx context.Context, req model.CompletionRequest) (*mo
 		content = orResp.Choices[0].Message.Content
 	}
 
-	return &model.CompletionResponse{
+	return &CompletionResponse{
 		ID:      orResp.ID,
 		Model:   orResp.Model,
 		Content: content,

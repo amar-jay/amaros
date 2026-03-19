@@ -19,7 +19,7 @@ type Config struct {
 }
 
 type MemoryConfig struct {
-	RootDir string `mapstructure:"root_dir"`
+	RootDir    string `mapstructure:"root_dir"`
 	ColdDbPath string `mapstructure:"cold_db_path"`
 }
 

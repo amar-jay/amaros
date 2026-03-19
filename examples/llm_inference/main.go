@@ -7,24 +7,23 @@ import (
 	"time"
 
 	"github.com/amar-jay/amaros/internal/model"
-	"github.com/amar-jay/amaros/internal/openrouter"
+	"github.com/amar-jay/amaros/internal/model/openrouter"
 	"github.com/amar-jay/amaros/pkg/config"
-	"github.com/amar-jay/amaros/pkg/msgs"
 	"github.com/amar-jay/amaros/pkg/node"
 	"github.com/amar-jay/amaros/pkg/topic"
 )
 
 const (
 	defaultModel   = "openrouter/free"
-	requestTopic   = "/llm.execute"
-	responseTopic  = "/llm.stdout"
+	requestTopic   = "/llm.request"
+	responseTopic  = "/llm.response"
 	requestTimeout = 60 * time.Second
 )
 
 var (
 	conf     *config.Config
 	llmNode  *node.Node
-	llmReq   = &msgs.LLMRequest{}
+	llmReq   = &model.CompletionRequest{}
 	provider model.Provider
 )
 
@@ -49,44 +48,51 @@ func init() {
 func onRequest(ctx topic.CallbackContext) {
 	// Copy the current request to avoid sharing the global pointer with future callbacks.
 	req := *llmReq
-	if req.Prompt == "" {
-		ctx.Logger.Warn("received empty prompt, skipping")
+
+	if len(req.Messages) == 0 {
+		ctx.Logger.Warn("received empty messages array, skipping")
 		return
 	}
 
-	modelName := req.Model
-	if modelName == "" {
-		modelName = defaultModel
+	if req.Model == "" {
+		req.Model = defaultModel
+		ctx.Logger.Warn("received empty model name, using default: " + defaultModel)
 	}
 
-	messages := make([]model.Message, 0, 2)
-	if req.SystemPrompt != "" {
-		messages = append(messages, model.Message{
-			Role:    model.RoleSystem,
-			Content: req.SystemPrompt,
-		})
-	}
-	messages = append(messages, model.Message{
-		Role:    model.RoleUser,
-		Content: req.Prompt,
-	})
+	// modelName := req.Model
+	// if modelName == "" {
+	// 	modelName = defaultModel
+	// }
 
-	compReq := model.CompletionRequest{
-		Model:       modelName,
-		Messages:    messages,
-		MaxTokens:   req.MaxTokens,
-		Temperature: req.Temperature,
-	}
+	// messages := make([]model.Message, 0, 2)
+	// if req.SystemPrompt != "" {
+	// 	messages = append(messages, model.Message{
+	// 		Role:    model.RoleSystem,
+	// 		Content: req.SystemPrompt,
+	// 	})
+	// }
+	// messages = append(messages, model.Message{
+	// 	Role:    model.RoleUser,
+	// 	Content: req.Prompt,
+	// })
+
+	// compReq := model.CompletionRequest{
+	// 	Model:       modelName,
+	// 	Messages:    messages,
+	// 	MaxTokens:   req.MaxTokens,
+	// 	Temperature: req.Temperature,
+	// }
+	prompt := req.Messages[len(req.Messages)-1].Content
 
 	ctx.Logger.WithFields(map[string]interface{}{
-		"model":  modelName,
-		"prompt": req.Prompt,
+		"model":  req.Model,
+		"prompt": prompt,
 	}).Info("sending LLM request")
 
 	callCtx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
-	resp, err := provider.Complete(callCtx, compReq)
+	resp, err := provider.Complete(callCtx, req)
 	if err != nil {
 		ctx.Logger.WithFields(map[string]interface{}{
 			"error": err.Error(),
@@ -100,12 +106,14 @@ func onRequest(ctx topic.CallbackContext) {
 		"completion_tokens": resp.Usage.CompletionTokens,
 	}).Infof("LLM response: %s", resp.Content)
 
-	llmNode.Publish(responseTopic, &msgs.LLMResponse{
-		Content:          resp.Content,
-		Model:            resp.Model,
-		PromptTokens:     resp.Usage.PromptTokens,
-		CompletionTokens: resp.Usage.CompletionTokens,
-		TotalTokens:      resp.Usage.TotalTokens,
+	llmNode.Publish(responseTopic, &model.CompletionResponse{
+		Content: resp.Content,
+		Model:   resp.Model,
+		Usage: model.Usage{
+			PromptTokens:     resp.Usage.PromptTokens,
+			CompletionTokens: resp.Usage.CompletionTokens,
+			TotalTokens:      resp.Usage.TotalTokens,
+		},
 	})
 }
 

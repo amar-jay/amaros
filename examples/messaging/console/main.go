@@ -23,11 +23,13 @@ type model struct {
 	node          *node.Node
 	requestTopic  string
 	responseTopic string
+	taskTopic     string
 	resultTopic   string
 
-	input   textinput.Model
-	current *msgs.ExecuteQuestion
-	history []string
+	input      textinput.Model
+	current    *msgs.ExecuteQuestion
+	createTask bool
+	history    []string
 
 	questionCh chan msgs.ExecuteQuestion
 	resultCh   chan msgs.ExecuteResult
@@ -38,6 +40,7 @@ func main() {
 	nodeName := flag.String("node-name", "console_messaging", "name of this node")
 	requestTopic := flag.String("request-topic", "/console.question", "topic to subscribe for incoming questions")
 	responseTopic := flag.String("response-topic", "/console.response", "topic to publish answers")
+	taskTopic := flag.String("task-topic", "/llm.execute.task", "topic to send tasks to the llm_execute node")
 	resultTopic := flag.String("result-topic", "/llm.execute.result", "topic to subscribe for execution results")
 	flag.Parse()
 
@@ -55,6 +58,11 @@ func main() {
 			Topic:   *responseTopic,
 			Type:    msgs.GetType(msgs.ExecuteResponse{}),
 			Purpose: "answers returned by the llm_question_answer node to previously asked questions",
+		},
+		{
+			Topic:   *taskTopic,
+			Type:    msgs.GetType(msgs.ExecuteTask{}),
+			Purpose: "tasks submitted by console_messaging to be executed by the llm_execute node",
 		},
 	})
 
@@ -93,7 +101,7 @@ func main() {
 		})
 	}()
 
-	m := newModel(n, *requestTopic, *responseTopic, *resultTopic, questionCh, resultCh)
+	m := newModel(n, *requestTopic, *responseTopic, *taskTopic, *resultTopic, questionCh, resultCh)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if err := p.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start UI: %v\n", err)
@@ -101,7 +109,7 @@ func main() {
 	}
 }
 
-func newModel(n *node.Node, requestTopic, responseTopic, resultTopic string, questionCh chan msgs.ExecuteQuestion, resultCh chan msgs.ExecuteResult) model {
+func newModel(n *node.Node, requestTopic, responseTopic, taskTopic, resultTopic string, questionCh chan msgs.ExecuteQuestion, resultCh chan msgs.ExecuteResult) model {
 	i := textinput.New()
 	i.Placeholder = "Type your answer and press Enter"
 	i.Focus()
@@ -112,6 +120,7 @@ func newModel(n *node.Node, requestTopic, responseTopic, resultTopic string, que
 		node:          n,
 		requestTopic:  requestTopic,
 		responseTopic: responseTopic,
+		taskTopic:     taskTopic,
 		resultTopic:   resultTopic,
 		input:         i,
 		questionCh:    questionCh,
@@ -157,8 +166,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
 			return m, tea.Quit
+		case "esc":
+			if m.createTask {
+				m.createTask = false
+				m.input.SetValue("")
+				m.input.Placeholder = "Type your answer and press Enter"
+				return m, nil
+			}
+			return m, tea.Quit
+		case "ctrl+t":
+			if m.current == nil {
+				m.createTask = true
+				m.input.SetValue("")
+				m.input.Placeholder = "Type a task description and press Enter"
+			}
+			return m, nil
 		case "enter":
 			if m.current != nil {
 				answer := strings.TrimSpace(m.input.Value())
@@ -172,6 +196,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.history = append([]string{fmt.Sprintf("Q: %s\nA: %s", m.current.Question, answer)}, m.history...)
 					m.current = nil
 					m.input.SetValue("")
+				}
+			} else if m.createTask {
+				desc := strings.TrimSpace(m.input.Value())
+				if desc != "" {
+					task := msgs.ExecuteTask{Description: desc}
+					m.node.Publish(m.taskTopic, task)
+					m.history = append([]string{fmt.Sprintf("Task sent: %s", desc)}, m.history...)
+					m.createTask = false
+					m.input.SetValue("")
+					m.input.Placeholder = "Type your answer and press Enter"
 				}
 			}
 			return m, nil
@@ -193,8 +227,13 @@ func (m model) View() string {
 		b.WriteString(fmt.Sprintf("Question: %s\n\n", m.current.Question))
 		b.WriteString(m.input.View())
 		b.WriteString("\n")
+	} else if m.createTask {
+		b.WriteString("Create task (press Esc to cancel):\n")
+		b.WriteString(m.input.View())
+		b.WriteString("\n")
 	} else {
 		b.WriteString("Waiting for question... (Ctrl+C to quit)\n")
+		b.WriteString("Press 'ctrl+t' to submit a task to llm_execute\n")
 	}
 
 	if len(m.history) > 0 {

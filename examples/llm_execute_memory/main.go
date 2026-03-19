@@ -9,7 +9,7 @@ import (
 
 	"github.com/amar-jay/amaros/internal/memory"
 	"github.com/amar-jay/amaros/internal/model"
-	"github.com/amar-jay/amaros/internal/openrouter"
+	"github.com/amar-jay/amaros/internal/model/openrouter"
 	"github.com/amar-jay/amaros/pkg/config"
 	"github.com/amar-jay/amaros/pkg/msgs"
 	"github.com/amar-jay/amaros/pkg/node"
@@ -62,7 +62,7 @@ func init() {
 			Type:          msgs.GetType(msgs.ExecuteTask{}), //"{'task_id': string, 'description': string}",
 			Purpose:       "task that should be handled by agent",
 			ResponseTopic: resultTopic,
-			ResponseType:  "{'task_id': string, 'success': bool, 'summary': string, 'output': string}",
+			ResponseType:  msgs.GetType(msgs.ExecuteResult{}), //"{'task_id': string, 'success': bool, 'summary': string, 'output': string}",
 		},
 		{
 			Topic:   resultTopic,

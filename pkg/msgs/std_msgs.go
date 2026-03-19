@@ -7,39 +7,9 @@ import (
 )
 
 type AMAROS_MSG interface{}
-type String struct {
+type Message struct {
 	AMAROS_MSG
-	Str string `json:"str" msgpack:"str"`
-}
-
-type Int struct {
-	AMAROS_MSG
-	Int int `json:"int" msgpack:"int"`
-}
-
-type Float struct {
-	AMAROS_MSG
-	Float float64 `json:"float" msgpack:"float"`
-}
-
-type Bool struct {
-	AMAROS_MSG
-	Bool bool `json:"bool" msgpack:"bool"`
-}
-
-type ColorRGBA struct {
-	AMAROS_MSG
-	R float32 `json:"R" msgpack:"R"`
-	G float32 `json:"G" msgpack:"G"`
-	B float32 `json:"B" msgpack:"B"`
-	A float32 `json:"A" msgpack:"A"`
-}
-
-type ColorRGB struct {
-	AMAROS_MSG
-	R float32 `json:"R" msgpack:"R"`
-	G float32 `json:"G" msgpack:"G"`
-	B float32 `json:"B" msgpack:"B"`
+	Data string `json:"data" msgpack:"data"`
 }
 
 type Header struct {

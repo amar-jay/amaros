@@ -360,8 +360,8 @@ func main() {
 							conn := topic.DialServer(cCtx.String("tx_address"))
 							var msg interface{}
 							if message == "" {
-								demoMsg := new(msgs.String)
-								demoMsg.Str = "Hello AMAROS!"
+								demoMsg := new(msgs.Message)
+								demoMsg.Data = "Hello AMAROS!"
 								msg = interface{}(demoMsg)
 							} else {
 								fmt.Println("MESSAGE IS :", message)
@@ -411,14 +411,14 @@ func main() {
 							}
 
 							conn := topic.DialServer(cCtx.String("rx_address"))
-							msg := msgs.String{}
+							msg := msgs.Message{}
 							_topic := topicName
 							callback := func(ctx topic.CallbackContext) {
 								// a simple callback that just prints the message content and type
 								ctx.Logger.WithFields(map[string]interface{}{
 									"topic": _topic,
 									"type":  reflect.TypeOf(msg),
-								}).Debug(msg.Str)
+								}).Debug(msg.Data)
 							}
 
 							topic.Subscribe(conn, _topic, &msg, callback)

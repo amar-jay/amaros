@@ -1,35 +1,14 @@
 package msgs
 
-// LLMRequest is a pub/sub message type for requesting LLM inference.
-// Publish this to the /llm/request topic to trigger an inference call.
-type LLMRequest struct {
-	AMAROS_MSG
-	Prompt       string  `json:"prompt" msgpack:"prompt"`
-	SystemPrompt string  `json:"system_prompt,omitempty" msgpack:"system_prompt,omitempty"`
-	Model        string  `json:"model,omitempty" msgpack:"model,omitempty"`
-	MaxTokens    int     `json:"max_tokens,omitempty" msgpack:"max_tokens,omitempty"`
-	Temperature  float64 `json:"temperature,omitempty" msgpack:"temperature,omitempty"`
-}
-
-// LLMResponse is a pub/sub message type carrying the result of an LLM inference call.
-// The llm_inference node publishes this to the /llm/response topic.
-type LLMResponse struct {
-	AMAROS_MSG
-	Content          string `json:"content" msgpack:"content"`
-	Model            string `json:"model,omitempty" msgpack:"model,omitempty"`
-	PromptTokens     int    `json:"prompt_tokens,omitempty" msgpack:"prompt_tokens,omitempty"`
-	CompletionTokens int    `json:"completion_tokens,omitempty" msgpack:"completion_tokens,omitempty"`
-	TotalTokens      int    `json:"total_tokens,omitempty" msgpack:"total_tokens,omitempty"`
-}
-
-// ExecuteTask is published to /llm.execute.task to trigger an agentic task execution.
+// ExecuteTask is published to /*.task to trigger an agentic task execution.
 type ExecuteTask struct {
 	AMAROS_MSG
 	TaskID      string `json:"task_id" msgpack:"task_id"`
+	Name        string `json:"name" msgpack:"name"`
 	Description string `json:"description" msgpack:"description"`
 }
 
-// ExecuteQuestion is published to /llm.execute.question when the agent needs user input.
+// ExecuteQuestion is published to /*.question when the agent needs user input.
 type ExecuteQuestion struct {
 	AMAROS_MSG
 	TaskID     string `json:"task_id" msgpack:"task_id"`
@@ -37,7 +16,7 @@ type ExecuteQuestion struct {
 	Question   string `json:"question" msgpack:"question"`
 }
 
-// ExecuteResponse is published to /llm.execute.response with the user's answer.
+// ExecuteResponse is published to /*.response with the user's answer.
 type ExecuteResponse struct {
 	AMAROS_MSG
 	TaskID     string `json:"task_id" msgpack:"task_id"`
@@ -45,11 +24,12 @@ type ExecuteResponse struct {
 	Response   string `json:"response" msgpack:"response"`
 }
 
-// ExecuteResult is published to /llm.execute.result when the task completes.
+// ExecuteResult is published to /*.result when the task completes.
 type ExecuteResult struct {
 	AMAROS_MSG
-	TaskID  string `json:"task_id" msgpack:"task_id"`
-	Success bool   `json:"success" msgpack:"success"`
-	Summary string `json:"summary" msgpack:"summary"`
-	Output  string `json:"output" msgpack:"output"`
+	TaskID    string `json:"task_id" msgpack:"task_id"`
+	Success   bool   `json:"success" msgpack:"success"`
+	Summary   string `json:"summary" msgpack:"summary"`
+	Output    string `json:"output" msgpack:"output"`
+	CreatedAt string `json:"created_at" msgpack:"created_at"`
 }
