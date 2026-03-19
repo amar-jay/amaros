@@ -513,6 +513,7 @@ func findTopicByName(topics []topic.Topic, name string) (topic.Topic, bool) {
 	return topic.Topic{}, false
 }
 
+
 func printTopic(listedTopic topic.Topic, verbose bool) {
 	if !verbose {
 		fmt.Printf("%-28s type=%-24s subs=%-3d", listedTopic.Name, defaultString(listedTopic.Type, "unknown"), listedTopic.Subscribers)

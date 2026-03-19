@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	defaultModel  = "openrouter/hunter-alpha"
+	defaultModel  = "nvidia/nemotron-3-super-120b-a12b:free" //"openrouter/free"
 	taskTopic     = "/llm.execute.task"
 	questionTopic = "/telegram.question"
 	resultTopic   = "/llm.execute.result"
