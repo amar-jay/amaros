@@ -33,5 +33,5 @@ func main() {
 		},
 	}
 
-	node.Publish("/llm.execute", msg)
+	node.Publish("/llm.request", msg)
 }

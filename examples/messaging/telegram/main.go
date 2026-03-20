@@ -34,7 +34,7 @@ var (
 	sendNode     *node.Node
 	execNode     *node.Node
 	question     = &msgs.ExecuteQuestion{}
-	statement     = &msgs.Message{}
+	statement    = &msgs.Message{}
 	telegram     *TelegramClient
 	result       = &msgs.ExecuteResult{}
 	taskDispatch = make(map[string]taskSubscription)
@@ -255,9 +255,9 @@ func init() {
 		log.Fatalf("failed to initialize telegram client: %v", err)
 	}
 
-	llmNode = node.Init(node.NodeConfig{Name:"telegram_messaging"})
-	sendNode = node.Init(node.NodeConfig{Name:"telegram_messaging"})
-	execNode = node.Init(node.NodeConfig{Name:"telegram_messaging"})// Use the same node name for a secondary connection
+	llmNode = node.Init(node.NodeConfig{Name: "telegram_messaging"})
+	sendNode = node.Init(node.NodeConfig{Name: "telegram_messaging"})
+	execNode = node.Init(node.NodeConfig{Name: "telegram_messaging"}) // Use the same node name for a secondary connection
 
 	llmNode.DescribeTopics([]msgs.TopicMetadata{
 		{
@@ -336,7 +336,7 @@ func onResult(ctx topic.CallbackContext) {
 			"chat_id": subscription.chatID,
 		}).Error("failed to send message to telegram")
 	}
-
+	return
 }
 
 func onSend(ctx topic.CallbackContext) {
@@ -351,6 +351,7 @@ func onSend(ctx topic.CallbackContext) {
 			"error": err.Error(),
 		}).Error("failed to send statement to telegram")
 	}
+	return
 }
 
 func onRequest(ctx topic.CallbackContext) {
@@ -396,9 +397,10 @@ func main() {
 
 	// Run subscriptions concurrently so we can handle multiple topics.
 	llmNode.Callback(onRequest)
-	execNode.Callback(onResult)
-	sendNode.Callback(onSend)
-	go execNode.Subscribe(resultTopic, result)
-	go sendNode.Subscribe(statementTopic, statement)
-	llmNode.Subscribe(requestTopic, question)
+	llmNode.Callback(onResult)
+	llmNode.Callback(onSend)
+	llmNode.SubscribeWithCallback(resultTopic, result, onResult)
+	llmNode.SubscribeWithCallback(statementTopic, statement, onSend)
+	llmNode.SubscribeWithCallback(requestTopic, question, onRequest)
+	llmNode.Listen()
 }

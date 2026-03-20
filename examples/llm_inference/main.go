@@ -134,6 +134,7 @@ func main() {
 	fmt.Printf("  subscribed to: %s\n", requestTopic)
 	fmt.Printf("  publishing to: %s\n", responseTopic)
 
-	llmNode.Callback(onRequest)
-	llmNode.Subscribe(requestTopic, llmReq)
+	// llmNode.Callback(onRequest)
+	llmNode.SubscribeWithCallback(requestTopic, llmReq, onRequest)
+	llmNode.Listen()
 }

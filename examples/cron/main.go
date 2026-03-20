@@ -191,7 +191,8 @@ func main() {
 	})
 
 	fmt.Println("Cron node ready. Listening on /cron.request...")
+	n.Listen() // Ensure we're listening for responses
 
 	// Keep the process alive
-	select {}
+	// select {}
 }

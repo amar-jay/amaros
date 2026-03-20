@@ -120,6 +120,7 @@ func main() {
 	fmt.Printf("  subscribed to: %s\n", taskTopic)
 	fmt.Printf("  publishes to:  %s, %s\n", questionTopic, resultTopic)
 
-	execNode.Callback(onTask)
-	execNode.Subscribe(taskTopic, task)
+	// execNode.Callback(onTask)
+	execNode.SubscribeWithCallback(taskTopic, task, onTask)
+	execNode.Listen()
 }

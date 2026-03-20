@@ -25,7 +25,7 @@ func main() {
 	*/
 
 	t := &msgs.ExecuteResult{}
-	node.Callback(func(ctx topic.CallbackContext) {
+	c := func(ctx topic.CallbackContext) {
 		fmt.Printf("%v\n", t)
 		// if there is a question, answer it through cli
 		if t.Success {
@@ -41,6 +41,7 @@ func main() {
 			fmt.Printf("Error : %s\n", t.Output)
 		}
 		println(time.Now().String(), "callback called")
-	})
-	node.Subscribe("/llm.execute.result", t)
+	}
+	node.SubscribeWithCallback("/llm.execute.result", t, c)
+	node.Listen()
 }

@@ -39,6 +39,7 @@ func callback(ctx topic.CallbackContext) {
 // and republishes the transformed message on "/chatter_transformed".
 func main() {
 
-	n.Callback(callback)
-	n.Subscribe("/chatter", t)
+	// n.Callback(callback)
+	n.SubscribeWithCallback("/chatter", t, callback)
+	n.Listen()
 }

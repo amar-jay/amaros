@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"reflect"
 	"sort"
@@ -357,7 +358,13 @@ func main() {
 							}
 
 							message := cCtx.String("message")
-							conn := topic.DialServer(cCtx.String("tx_address"))
+
+							conn, err := net.Dial("tcp", cCtx.String("tx_address"))
+							if err != nil {
+								fmt.Println("Error connecting to server:", err)
+								os.Exit(1)
+							}
+
 							var msg interface{}
 							if message == "" {
 								demoMsg := new(msgs.Message)
@@ -394,8 +401,19 @@ func main() {
 							}
 
 							topicName := cCtx.Args().Get(0)
-							rxconn := topic.DialServer(cCtx.String("rx_address"))
-							txconn := topic.DialServer(cCtx.String("tx_address"))
+
+							var err error
+							rxconn, err := net.Dial("tcp", cCtx.String("rx_address"))
+							if err != nil {
+								fmt.Println("Error connecting to server:", err)
+								os.Exit(1)
+							}
+
+							txconn, err := net.Dial("tcp", cCtx.String("tx_address"))
+							if err != nil {
+								fmt.Println("Error connecting to server:", err)
+								os.Exit(1)
+							}
 							topics, err := topic.FetchList(txconn)
 							if err == nil {
 								if listedTopic, ok := findTopicByName(topics, topicName); ok {
@@ -434,7 +452,12 @@ func main() {
 							if cCtx.NArg() == 0 {
 								log.Fatal("Topic name is required")
 							}
-							conn := topic.DialServer(cCtx.String("rx_address"))
+							conn, err := net.Dial("tcp", cCtx.String("rx_address"))
+							if err != nil {
+								fmt.Println("Error connecting to server:", err)
+								os.Exit(1)
+							}
+
 							topics, err := topic.FetchList(conn)
 							if err != nil {
 								return err
@@ -462,7 +485,12 @@ func main() {
 							},
 						},
 						Action: func(cCtx *cli.Context) error {
-							conn := topic.DialServer(cCtx.String("rx_address"))
+							conn, err := net.Dial("tcp", cCtx.String("rx_address"))
+							if err != nil {
+								fmt.Println("Error connecting to server:", err)
+								os.Exit(1)
+							}
+
 							topics, err := topic.FetchList(conn)
 							if err != nil {
 								return err

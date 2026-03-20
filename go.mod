@@ -14,6 +14,7 @@ require (
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/viper v1.21.0
 	github.com/urfave/cli/v2 v2.27.4
+	golang.org/x/sync v0.19.0
 	modernc.org/sqlite v1.46.1
 )
 

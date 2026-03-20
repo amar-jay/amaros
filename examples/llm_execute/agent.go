@@ -556,9 +556,15 @@ func (a *Agent) askUser(taskID, question string) (string, error) {
 	questionID := newQuestionID(taskID)
 	conf := config.Get()
 
+	// TODO: IMPLEMENT THIS WITHIN THE NODE PACKAGE SO WE CAN REUSE CONNECTIONS AND AVOID DIAL OVERHEAD ON EVERY ASK ACTION
+
 	// Dial a separate RX connection for the response subscription
 	url := net.JoinHostPort(conf.Core.Host, strconv.Itoa(conf.Core.RxPort))
-	rxConn := topic.DialServer(url)
+	rxConn, err := net.Dial("tcp", url)
+	if err != nil {
+		return "", fmt.Errorf("Error connecting to server: %s", err.Error())
+	}
+
 	defer rxConn.Close()
 
 	responseMsg := &msgs.ExecuteResponse{}

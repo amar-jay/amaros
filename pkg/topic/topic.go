@@ -40,15 +40,6 @@ func init() {
 	logger.SetLevel("debug")
 }
 
-func DialServer(address string) net.Conn {
-	conn, err := net.Dial("tcp", address)
-	if err != nil {
-		fmt.Println("Error connecting to server:", err)
-		os.Exit(1)
-	}
-	return conn
-}
-
 func writeEnvelope(conn net.Conn, env msgs.Envelope) error {
 	data, err := msgpack.Marshal(env)
 	if err != nil {
@@ -127,6 +118,70 @@ func handleSubscribe(conn net.Conn, txconn net.Conn, topic string, msg msgs.AMAR
 
 		if env.Topic == topic && callback != nil {
 			callback(CallbackContext{Logger: logger, Params: "", Topics: topics})
+		}
+	}
+}
+
+type Subscription struct {
+	Msg      msgs.AMAROS_MSG
+	Callback func(CallbackContext)
+}
+
+func handleMultiSubscribe(conn net.Conn, txconn net.Conn, topic map[string]Subscription) {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sig
+		for t := range topic {
+			handleUnsubscribe(conn, t)
+		}
+		// handleUnsubscribe(conn, topic)
+		os.Exit(1)
+	}()
+
+	for {
+		var env msgs.Envelope
+		if err := msgpack.UnmarshalRead(conn, &env); err != nil {
+			logger.Error("Server disconnected:", err)
+			return
+		}
+
+		if env.Cmd == msgs.RespError {
+			logger.Error("Server error:", env.Err)
+			continue
+		}
+
+		if env.Cmd == msgs.RespOK {
+			// subscribe acknowledgment, no action needed
+			continue
+		}
+
+		if env.Cmd != msgs.RespMessage {
+			logger.Error("Unexpected message type:", env.Cmd)
+			continue
+		}
+
+		if len(env.Payload) == 0 {
+			continue
+		}
+
+		topics, err := FetchList(txconn)
+		if err != nil {
+			logger.Error(err)
+			return
+		}
+
+		for t, info := range topic {
+			if env.Topic == t {
+				if err := msgpack.Unmarshal(env.Payload, &info.Msg); err != nil {
+					logger.Error("Unmarshal msgpack error:", err)
+					continue
+				}
+
+				if info.Callback != nil {
+					info.Callback(CallbackContext{Logger: logger, Params: "", Topics: topics})
+				}
+			}
 		}
 	}
 }
@@ -210,7 +265,11 @@ func Subscribe(rxconn net.Conn, txconn net.Conn, topic string, msg msgs.AMAROS_M
 		logger.Error("Failed to send SUBSCRIBE:", err)
 		return
 	}
-	handleSubscribe(rxconn, txconn, topic, msg, callback)
+	// handleSubscribe(rxconn, txconn, topic, msg, callback)
+}
+
+func Listen(rxconn net.Conn, txconn net.Conn, t map[string]Subscription) {
+	handleMultiSubscribe(rxconn, txconn, t)
 }
 
 func FetchList(conn net.Conn) ([]Topic, error) {
