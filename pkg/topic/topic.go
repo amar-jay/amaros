@@ -74,7 +74,7 @@ type CallbackContext struct {
 	// add more fields as needed
 }
 
-func handleSubscribe(conn net.Conn, topic string, msg msgs.AMAROS_MSG, callback func(CallbackContext)) {
+func handleSubscribe(conn net.Conn, txconn net.Conn, topic string, msg msgs.AMAROS_MSG, callback func(CallbackContext)) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -119,7 +119,7 @@ func handleSubscribe(conn net.Conn, topic string, msg msgs.AMAROS_MSG, callback 
 			println("No logger present")
 		}
 
-		topics, err := FetchList(conn)
+		topics, err := FetchList(txconn)
 		if err != nil {
 			logger.Error(err)
 			return
@@ -199,18 +199,18 @@ func Publish(conn net.Conn, topic string, message msgs.AMAROS_MSG) {
 	}
 }
 
-func Subscribe(conn net.Conn, topic string, msg msgs.AMAROS_MSG, callback func(CallbackContext)) {
+func Subscribe(rxconn net.Conn, txconn net.Conn, topic string, msg msgs.AMAROS_MSG, callback func(CallbackContext)) {
 	if err := Validate(topic); err != nil {
 		logger.Error("Error: invalid topic ", topic)
 		return
 	}
 
 	topicType := msgs.GetType(msg)
-	if err := writeEnvelope(conn, msgs.Envelope{Cmd: msgs.CmdSubscribe, Topic: topic, TopicType: topicType}); err != nil {
+	if err := writeEnvelope(rxconn, msgs.Envelope{Cmd: msgs.CmdSubscribe, Topic: topic, TopicType: topicType}); err != nil {
 		logger.Error("Failed to send SUBSCRIBE:", err)
 		return
 	}
-	handleSubscribe(conn, topic, msg, callback)
+	handleSubscribe(rxconn, txconn, topic, msg, callback)
 }
 
 func FetchList(conn net.Conn) ([]Topic, error) {
@@ -220,8 +220,8 @@ func FetchList(conn net.Conn) ([]Topic, error) {
 	return handleList(conn)
 }
 
-func List(conn net.Conn) {
-	topics, err := FetchList(conn)
+func List(txconn net.Conn) {
+	topics, err := FetchList(txconn)
 	if err != nil {
 		logger.Error(err)
 		return

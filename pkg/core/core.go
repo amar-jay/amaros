@@ -60,8 +60,8 @@ func (r *Core) Listen(host string, txPort int, rxPort int) {
 		return
 	}
 
-	r.logger.Printf("roscore TX (publish) listening on tcp://%s/\n", txAddr)
-	r.logger.Printf("roscore RX (subscribe) listening on tcp://%s/\n", rxAddr)
+	r.logger.Printf("core TX (publish) listening on tcp://%s/\n", txAddr)
+	r.logger.Printf("core RX (subscribe) listening on tcp://%s/\n", rxAddr)
 
 	go func() {
 		defer rxLn.Close()

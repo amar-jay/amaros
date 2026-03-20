@@ -394,8 +394,9 @@ func main() {
 							}
 
 							topicName := cCtx.Args().Get(0)
-							metaConn := topic.DialServer(cCtx.String("rx_address"))
-							topics, err := topic.FetchList(metaConn)
+							rxconn := topic.DialServer(cCtx.String("rx_address"))
+							txconn := topic.DialServer(cCtx.String("tx_address"))
+							topics, err := topic.FetchList(txconn)
 							if err == nil {
 								if listedTopic, ok := findTopicByName(topics, topicName); ok {
 									fmt.Printf("Subscribing to %s\n", listedTopic.Name)
@@ -410,7 +411,6 @@ func main() {
 								}
 							}
 
-							conn := topic.DialServer(cCtx.String("rx_address"))
 							msg := msgs.Message{}
 							_topic := topicName
 							callback := func(ctx topic.CallbackContext) {
@@ -421,7 +421,7 @@ func main() {
 								}).Debug(msg.Data)
 							}
 
-							topic.Subscribe(conn, _topic, &msg, callback)
+							topic.Subscribe(rxconn, txconn, _topic, &msg, callback)
 							return nil
 						},
 					},
@@ -512,7 +512,6 @@ func findTopicByName(topics []topic.Topic, name string) (topic.Topic, bool) {
 
 	return topic.Topic{}, false
 }
-
 
 func printTopic(listedTopic topic.Topic, verbose bool) {
 	if !verbose {

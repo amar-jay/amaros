@@ -23,6 +23,7 @@ import (
 // tasks can be sent via a topic
 const (
 	requestTopic   = "/telegram.question"
+	statementTopic = "/telegram.statement"
 	responseTopic  = "/telegram.response"
 	resultTopic    = "/llm.execute.result"
 	requestTimeout = 7 * time.Minute
@@ -30,8 +31,10 @@ const (
 
 var (
 	llmNode      *node.Node
+	sendNode     *node.Node
 	execNode     *node.Node
 	question     = &msgs.ExecuteQuestion{}
+	statement     = &msgs.Message{}
 	telegram     *TelegramClient
 	result       = &msgs.ExecuteResult{}
 	taskDispatch = make(map[string]taskSubscription)
@@ -123,6 +126,8 @@ func (tc *TelegramClient) handleCommand(chatID int64, text string) bool {
 	cmd := fields[0]
 	switch cmd {
 	case "/llm.execute.task":
+		fallthrough
+	case "/task":
 		desc := strings.TrimSpace(strings.TrimPrefix(text, cmd))
 		if desc == "" {
 			_, _ = tc.client.sendMessage(chatID, "Usage: /llm.execute.task <task description>")
@@ -145,6 +150,35 @@ func (tc *TelegramClient) handleCommand(chatID int64, text string) bool {
 	default:
 		return false
 	}
+}
+
+// send sends a statement to all registered chat IDs without expecting a response.
+func (tc *TelegramClient) send(statement string) error {
+	tc.chatIDsMu.RLock()
+	var chatIDs []int64
+	for chatID := range tc.chatIDs {
+		chatIDs = append(chatIDs, chatID)
+	}
+	tc.chatIDsMu.RUnlock()
+
+	if len(chatIDs) == 0 && tc.client.config.ChatId == "" {
+		return fmt.Errorf("no users have messaged the bot yet and no chat_id is configured. Message the bot first to register or set integrations.telegram.chat_id in your config.")
+	}
+
+	for _, chatID := range chatIDs {
+		_, _ = tc.client.sendMessage(chatID, statement)
+	}
+
+	// If no users have messaged yet, use the configured chat_id as a fallback.
+	if len(chatIDs) == 0 && tc.client.config.ChatId != "" {
+		// Allow numeric chat IDs or channel/user handles (e.g. @username).
+		if id, err := strconv.ParseInt(tc.client.config.ChatId, 10, 64); err == nil {
+			_, _ = tc.client.sendMessage(id, statement)
+		} else {
+			_, _ = tc.client.sendMessageToChannel(tc.client.config.ChatId, statement)
+		}
+	}
+	return nil
 }
 
 func (tc *TelegramClient) askQuestion(questionID, questionText string) (string, error) {
@@ -221,10 +255,16 @@ func init() {
 		log.Fatalf("failed to initialize telegram client: %v", err)
 	}
 
-	llmNode = node.Init("telegram_messaging")
-	execNode = node.Init("telegram_messaging") // Use the same node name for a secondary connection
+	llmNode = node.Init(node.NodeConfig{Name:"telegram_messaging"})
+	sendNode = node.Init(node.NodeConfig{Name:"telegram_messaging"})
+	execNode = node.Init(node.NodeConfig{Name:"telegram_messaging"})// Use the same node name for a secondary connection
 
 	llmNode.DescribeTopics([]msgs.TopicMetadata{
+		{
+			Topic:   statementTopic,
+			Type:    msgs.GetType(msgs.Message{}),
+			Purpose: "statements that should be sent to users without expecting a response",
+		},
 		{
 			Topic:         requestTopic,
 			Type:          msgs.GetType(msgs.ExecuteQuestion{}),
@@ -242,6 +282,10 @@ func init() {
 
 	execNode.OnShutdown(func() {
 		fmt.Println("shutting down telegram secondary receiver")
+	})
+
+	sendNode.OnShutdown(func() {
+		fmt.Println("shutting down telegram sender node")
 	})
 
 	llmNode.OnShutdown(func() {
@@ -295,6 +339,20 @@ func onResult(ctx topic.CallbackContext) {
 
 }
 
+func onSend(ctx topic.CallbackContext) {
+	req := *statement
+	if req.Data == "" {
+		ctx.Logger.Warn("received empty statement, skipping")
+		return
+	}
+
+	if err := telegram.send(req.Data); err != nil {
+		ctx.Logger.WithFields(map[string]interface{}{
+			"error": err.Error(),
+		}).Error("failed to send statement to telegram")
+	}
+}
+
 func onRequest(ctx topic.CallbackContext) {
 	req := *question
 	if req.Question == "" {
@@ -339,6 +397,8 @@ func main() {
 	// Run subscriptions concurrently so we can handle multiple topics.
 	llmNode.Callback(onRequest)
 	execNode.Callback(onResult)
+	sendNode.Callback(onSend)
 	go execNode.Subscribe(resultTopic, result)
+	go sendNode.Subscribe(statementTopic, statement)
 	llmNode.Subscribe(requestTopic, question)
 }

@@ -24,23 +24,23 @@ const (
 
 // ContentPart represents one piece of a multimodal message.
 type ContentPart struct {
-	Type     ContentType `json:"type"`
-	Text     string      `json:"text,omitempty"`
-	ImageURL *ImageURL   `json:"image_url,omitempty"`
+	Type     ContentType `json:"type" msgpack:"type"`
+	Text     string      `json:"text,omitempty" msgpack:"text,omitempty"`
+	ImageURL *ImageURL   `json:"image_url,omitempty" msgpack:"image_url,omitempty"`
 }
 
 // ImageURL holds the URL (or base64 data URI) for an image part.
 type ImageURL struct {
-	URL    string `json:"url"`
-	Detail string `json:"detail,omitempty"` // "auto", "low", "high"
+	URL    string `json:"url" msgpack:"url"`
+	Detail string `json:"detail,omitempty" msgpack:"detail,omitempty"` // "auto", "low", "high"
 }
 
 // Message represents a single message in a conversation.
 // For text-only messages, set Content. For multimodal messages, use Parts instead.
 type Message struct {
-	Role    Role          `json:"role"`
-	Content string        `json:"-"`
-	Parts   []ContentPart `json:"-"`
+	Role    Role          `json:"role" msgpack:"role"`
+	Content string        `json:"-" msgpack:"content"`
+	Parts   []ContentPart `json:"-" msgpack:"parts"`
 }
 
 // MarshalJSON serialises Message to the OpenAI/OpenRouter format.
@@ -102,26 +102,26 @@ func ImagePart(url string, detail string) ContentPart {
 
 // CompletionRequest is the input to a model completion call.
 type CompletionRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	MaxTokens   int       `json:"max_tokens,omitempty"`
-	Temperature float64   `json:"temperature,omitempty"`
-	Stream      bool      `json:"stream,omitempty"`
+	Model       string    `json:"model" msgpack:"model"`
+	Messages    []Message `json:"messages" msgpack:"messages"`
+	MaxTokens   int       `json:"max_tokens,omitempty" msgpack:"max_tokens,omitempty"`
+	Temperature float64   `json:"temperature,omitempty" msgpack:"temperature,omitempty"`
+	Stream      bool      `json:"stream,omitempty" msgpack:"stream,omitempty"`
 }
 
 // CompletionResponse is the output from a model completion call.
 type CompletionResponse struct {
-	ID      string `json:"id"`
-	Model   string `json:"model"`
-	Content string `json:"content"`
-	Usage   Usage  `json:"usage"`
+	ID      string `json:"id" msgpack:"id"`
+	Model   string `json:"model" msgpack:"model"`
+	Content string `json:"content" msgpack:"content"`
+	Usage   Usage  `json:"usage" msgpack:"usage"`
 }
 
 // Usage tracks token consumption.
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens     int `json:"prompt_tokens" msgpack:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens" msgpack:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens" msgpack:"total_tokens"`
 }
 
 // Provider is the interface that model backends must implement.

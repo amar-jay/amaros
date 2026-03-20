@@ -45,7 +45,7 @@ func init() {
 
 	provider = openrouter.New(apiKey)
 
-	execNode = node.Init("llm_execute")
+	execNode = node.Init(node.NodeConfig{Name: "llm_execute"})
 	execNode.DescribeTopics([]msgs.TopicMetadata{
 		{
 			Topic:         taskTopic,

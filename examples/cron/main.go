@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -28,12 +29,12 @@ import (
 // CronJobRequest configures a new scheduled job
 type CronJobRequest struct {
 	msgs.AMAROS_MSG
-	JobID         string `json:"job_id" msgpack:"job_id"`
-	Schedule      string `json:"schedule" msgpack:"schedule"`
-	TargetTopic   string `json:"target_topic" msgpack:"target_topic"`
-	Payload       string `json:"payload" msgpack:"payload"`
-	ResponseTopic string `json:"response_topic,omitempty" msgpack:"response_topic,omitempty"`
-	MaxRetries    int    `json:"max_retries,omitempty" msgpack:"max_retries,omitempty"`
+	JobID         string      `json:"job_id" msgpack:"job_id"`
+	Schedule      string      `json:"schedule" msgpack:"schedule"`
+	TargetTopic   string      `json:"target_topic" msgpack:"target_topic"`
+	Payload       interface{} `json:"payload" msgpack:"payload"`
+	ResponseTopic string      `json:"response_topic,omitempty" msgpack:"response_topic,omitempty"`
+	MaxRetries    int         `json:"max_retries,omitempty" msgpack:"max_retries,omitempty"`
 }
 
 // CronJobResponse defines the response that clears a job
@@ -51,7 +52,7 @@ type JobState struct {
 }
 
 func main() {
-	n := node.Init("cron_node")
+	n := node.Init(node.NodeConfig{Name: "cron_node"})
 	n.OnShutdown(func() {
 		fmt.Println("Shutting down cron node")
 	})
@@ -90,7 +91,6 @@ func main() {
 		jobID := requestMsg.JobID
 		schedule := requestMsg.Schedule
 		targetTopic := requestMsg.TargetTopic
-		payloadStr := requestMsg.Payload
 		responseTarget := requestMsg.ResponseTopic
 		maxRetries := requestMsg.MaxRetries
 
@@ -142,7 +142,17 @@ func main() {
 			fmt.Printf("[%s] Trigger job ID: %s (attempt %d). Publishing to %s\n", time.Now().Format(time.Kitchen), jobID, attempt, targetTopic)
 
 			// Dispatch
-			pubMsg := &msgs.Message{Data: payloadStr}
+			var pubMsg interface{}
+			// If the payload is a string, it might be JSON. Trying to parse it.
+			if pStr, ok := requestMsg.Payload.(string); ok {
+				if err := json.Unmarshal([]byte(pStr), &pubMsg); err != nil {
+					// Fallback to sending as a standard msgs.Message
+					pubMsg = &msgs.Message{Data: pStr}
+				}
+			} else {
+				// Otherwise, publish the payload as is
+				pubMsg = requestMsg.Payload
+			}
 			n.Publish(targetTopic, pubMsg)
 		})
 

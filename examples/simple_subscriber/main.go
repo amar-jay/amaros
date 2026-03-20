@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	node := node.Init("simple_node")
+	node := node.Init(node.NodeConfig{Name: "simple_subscriber"})
 	node.OnShutdown(func() {
 		println("shutting down node")
 	})

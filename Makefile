@@ -5,11 +5,12 @@
 BIN_DIR := bin
 
 # List your binaries here
-BINARIES := amaros cron llm_execute_memory llm_execute node_proxy telegram console
+BINARIES := amaros cron llm_inference llm_execute_memory llm_execute node_proxy telegram console
 
 # Map binaries -> source files
 amaros_SRC := cmd/main.go
 cron_SRC  := examples/cron/*
+llm_inference_SRC   := examples/llm_inference/*
 llm_execute_memory_SRC   := examples/llm_execute_memory/*
 llm_execute_SRC   := examples/llm_execute/*
 node_proxy_SRC := examples/node_proxy/*

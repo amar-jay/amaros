@@ -45,7 +45,7 @@ func main() {
 	flag.Parse()
 
 	// Initialize the node and reveal what we publish so others can discover it.
-	n := node.Init(*nodeName)
+	n := node.Init(node.NodeConfig{Name:*nodeName})
 	n.DescribeTopics([]msgs.TopicMetadata{
 		{
 			Topic:         *requestTopic,

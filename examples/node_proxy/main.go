@@ -14,7 +14,7 @@ var n *node.Node
 
 func init() {
 	t = &msgs.Quaternion{}
-	n = node.Init("node_proxy")
+	n = node.Init(node.NodeConfig{Name: "node_proxy"})
 	n.OnShutdown(func() {
 		println("shutting down node proxy")
 	})

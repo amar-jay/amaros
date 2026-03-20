@@ -20,10 +20,16 @@ type Node struct {
 	txMu       sync.Mutex
 }
 
-func Init(name string) *Node {
+type NodeConfig struct {
+	Name string
+	Tx   string
+	Rx   string
+}
+
+func Init(c NodeConfig) *Node {
 
 	n := &Node{
-		Name: name,
+		Name: c.Name,
 	}
 
 	sig := make(chan os.Signal, 1)
@@ -36,8 +42,15 @@ func Init(name string) *Node {
 		}
 	}()
 
-	n.txConn = topic.DialServer("localhost:11311")
-	n.rxConn = topic.DialServer("localhost:11312")
+	if c.Tx == "" {
+		c.Tx = "localhost:11311"
+	}
+	if c.Rx == "" {
+		c.Rx = "localhost:11312"
+	}
+
+	n.txConn = topic.DialServer(c.Tx)
+	n.rxConn = topic.DialServer(c.Rx)
 	return n
 }
 
@@ -70,11 +83,11 @@ func (n *Node) DescribeTopics(metadata []msgs.TopicMetadata) {
 }
 
 func (s *Node) Subscribe(_topic string, msg msgs.AMAROS_MSG) {
-	topic.Subscribe(s.rxConn, _topic, msg, s.callback)
+	topic.Subscribe(s.rxConn, s.txConn, _topic, msg, s.callback)
 }
 
 // SubscribeWithCallback subscribes to a topic using a specific callback function.
 // This allows a node to handle multiple topic types with different handlers.
 func (s *Node) SubscribeWithCallback(_topic string, msg msgs.AMAROS_MSG, callback func(topic.CallbackContext)) {
-	topic.Subscribe(s.rxConn, _topic, msg, callback)
+	topic.Subscribe(s.rxConn, s.txConn, _topic, msg, callback)
 }

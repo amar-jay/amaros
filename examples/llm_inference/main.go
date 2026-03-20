@@ -39,7 +39,9 @@ func init() {
 
 	provider = openrouter.New(apiKey)
 
-	llmNode = node.Init("llm_inference")
+	llmNode = node.Init(node.NodeConfig{
+		Name: "llm_inference",
+	})
 	llmNode.OnShutdown(func() {
 		fmt.Println("shutting down llm_inference node")
 	})

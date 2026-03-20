@@ -54,7 +54,7 @@ func init() {
 		log.Fatalf("failed to init memory: %v", err)
 	}
 
-	execNode = node.Init("llm_execute")
+	execNode = node.Init(node.NodeConfig{Name: "llm_execute_memory"})
 	execNode.DescribeTopics([]msgs.TopicMetadata{
 		{
 			Topic:         taskTopic,

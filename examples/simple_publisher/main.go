@@ -18,7 +18,7 @@ func main() {
 		panic("Question Description is required")
 	}
 
-	node := node.Init(*name)
+	node := node.Init(node.NodeConfig{Name: *name})
 	node.OnShutdown(func() {
 		println("shutting down node")
 	})
